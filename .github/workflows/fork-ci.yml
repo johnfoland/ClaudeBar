@@ -11,9 +11,21 @@ name: Fork CI
 # Pull requests only. Pushes to `mine` are covered by fork-release.yml, which
 # runs the same tests before it publishes — having both on push would build the
 # app twice per merge for no extra signal.
+#
+# The path filter mirrors fork-release.yml's: a pull request that only touches
+# the cask or the docs cannot change what `dev-build.sh --test` produces, so
+# building it is 13 minutes of waiting for a foregone answer. Note that GitHub
+# reports a skipped workflow as *pending*, not passing — so if "Build and test"
+# is ever made a required status check on `mine`, a docs-only PR will sit
+# unmergeable until the requirement is relaxed or the check is re-run by hand.
 on:
   pull_request:
     branches: [mine]
+    paths-ignore:
+      - 'homebrew/**'
+      - 'docs/**'
+      - 'README.md'
+      - 'CLAUDE.md'
   workflow_dispatch:
 
 concurrency:

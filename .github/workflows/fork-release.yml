@@ -28,6 +28,27 @@ name: Fork Release
 on:
   push:
     branches: [mine]
+    # A change that cannot alter the built app should not spend 13 minutes on a
+    # macOS runner minting a release identical to the last one. The cask is the
+    # clearest case: the tap pulls its body from `mine` on its own hourly
+    # schedule and commits whenever it differs, so a cask-only edit reaches
+    # users with no release at all — see homebrew/.github/workflows/update-cask.yml.
+    #
+    # `paths-ignore` skips the run only when *every* changed file matches, so an
+    # upstream merge touching Swift and docs together still builds.
+    #
+    # CHANGELOG.md is deliberately absent from this list. scripts/next-version.sh
+    # reads the upstream version out of its newest `## [x.y.z]` heading, so a
+    # sync that bumps it is precisely when a release *should* fire. Same for
+    # .github/workflows and scripts: a change there can change what gets built.
+    #
+    # This complements [skip release] rather than replacing it — that still
+    # works, and remains the way to suppress a release for a code change.
+    paths-ignore:
+      - 'homebrew/**'
+      - 'docs/**'
+      - 'README.md'
+      - 'CLAUDE.md'
   workflow_dispatch:
     inputs:
       version:
