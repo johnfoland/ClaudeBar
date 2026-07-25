@@ -129,10 +129,10 @@ jobs:
         run: |
           if [ "$NOTARIZED" = "true" ]; then
             INSTALL_NOTE=$'Signed with a Developer ID and notarized by Apple, so it installs with no extra flags.'
-            INSTALL_CMD='brew install --cask claudebar'
+            INSTALL_CMD='brew install --cask johnfoland/tap/claudebar'
           else
             INSTALL_NOTE=$'This build is **ad-hoc signed**, not notarized, so Gatekeeper will refuse to open it unless Homebrew skips the quarantine flag.'
-            INSTALL_CMD='brew install --cask --no-quarantine claudebar'
+            INSTALL_CMD='brew install --cask --no-quarantine johnfoland/tap/claudebar'
           fi
 
           cat > "$RUNNER_TEMP/notes.md" <<EOF
@@ -141,9 +141,13 @@ jobs:
           ## Install
 
           \`\`\`bash
-          brew tap johnfoland/tap
           $INSTALL_CMD
           \`\`\`
+
+          The name is fully qualified on purpose. Upstream ClaudeBar is in
+          \`homebrew/cask\`, so a bare \`brew install --cask claudebar\` installs
+          *their* build, not this fork's. The qualified form auto-taps, so there
+          is no separate \`brew tap\` step.
 
           $INSTALL_NOTE
 
@@ -155,7 +159,8 @@ jobs:
 
           Sparkle's automatic update check is disabled in fork builds — the bundled
           appcast points at upstream and would otherwise replace this with a stock
-          release. Homebrew handles updates instead: \`brew upgrade --cask claudebar\`.
+          release. Homebrew handles updates instead:
+          \`brew upgrade --cask johnfoland/tap/claudebar\`.
           EOF
 
           gh release create "fork-v$VERSION" "$ZIP" \

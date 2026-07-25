@@ -118,7 +118,7 @@ echo "    notarized:  $NOTARIZED"
 if [ "$NOTARIZED" != "true" ]; then
     echo
     echo "    This build is ad-hoc signed, so Gatekeeper will block it unless it is"
-    echo "    installed with:  brew install --cask --no-quarantine claudebar"
+    echo "    installed with:  brew install --cask --no-quarantine johnfoland/tap/claudebar"
 fi
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then

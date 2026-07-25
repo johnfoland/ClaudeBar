@@ -45,6 +45,6 @@ cask "claudebar" do
     bundled appcast points at upstream tddworks releases and would otherwise
     replace this build with a stock one. Update through Homebrew instead:
 
-      brew upgrade --cask claudebar
+      brew upgrade --cask johnfoland/tap/claudebar
   EOS
 end

@@ -411,9 +411,19 @@ The cask lives in [johnfoland/homebrew-tap](https://github.com/johnfoland/homebr
 and installs like this:
 
 ```bash
-brew tap johnfoland/tap
-brew install --cask claudebar
+brew install --cask johnfoland/tap/claudebar
 ```
+
+**Always use the fully-qualified `johnfoland/tap/claudebar`.** Upstream is
+already distributed through `homebrew/cask` — that is what the bare
+`brew install --cask claudebar` in the project README installs, and BrewTestBot
+bumps it on every tddworks release. Both taps therefore define the token
+`claudebar`, so the unqualified name gets you upstream's stock build rather than
+this fork's. The qualified form is unambiguous, and it auto-taps, so no separate
+`brew tap` step is needed.
+
+Both casks install to the same `/Applications/ClaudeBar.app`, so they cannot be
+installed side by side; see `--adopt` below for switching between them.
 
 Publishing a new version is one tag:
 
@@ -441,7 +451,7 @@ quarantined app that isn't signed with a Developer ID and notarized. With no
 signing secrets configured the release is ad-hoc signed, so installing it takes:
 
 ```bash
-brew install --cask --no-quarantine claudebar
+brew install --cask --no-quarantine johnfoland/tap/claudebar
 ```
 
 To drop that flag, add four secrets to this repo — the same names upstream's
@@ -458,6 +468,39 @@ To drop that flag, add four secrets to this repo — the same names upstream's
 runtime, notarization and stapling with no edits. It requires an Apple Developer
 Program membership ($99/yr); without one, ad-hoc plus `--no-quarantine` is a
 perfectly workable fork distribution.
+
+#### Handing a local build over to Homebrew
+
+If `/Applications/ClaudeBar.app` is already there from `dev-build.sh --install`,
+a plain install refuses to overwrite it. `--adopt` takes ownership of what is
+already on disk instead:
+
+```bash
+brew install --cask --adopt johnfoland/tap/claudebar
+```
+
+Adopt is not unconditional: Homebrew compares `CFBundleShortVersionString` and
+`CFBundleVersion` between the downloaded app and the installed one, and fails
+with *"It seems the existing App is different from the one being installed"* if
+they differ. A `dev-build.sh --install` bundle is stamped `-fork.<sha>`, which
+will not match a release's `0.4.73-fork.1`, so adopt normally refuses. Either
+remove the local build and install cleanly:
+
+```bash
+rm -rf /Applications/ClaudeBar.app        # your own build; no sudo needed
+brew install --cask johnfoland/tap/claudebar
+```
+
+or stamp the local build to match, from the same commit the release was tagged
+at (`CFBundleVersion` is the commit count, so it has to agree too):
+
+```bash
+CLAUDEBAR_VERSION=0.4.73-fork.1 ./scripts/dev-build.sh --install
+brew install --cask --adopt johnfoland/tap/claudebar
+```
+
+When adopt does succeed it keeps the bundle already on disk rather than
+replacing it, so a locally-built app never picks up a quarantine flag.
 
 Building a release locally works the same way:
 

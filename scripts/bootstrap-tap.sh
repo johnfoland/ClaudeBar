@@ -114,5 +114,6 @@ git push -u origin main
 
 info "Published $TAP_REPO"
 echo
-echo "    brew tap $OWNER/tap"
-echo "    brew install --cask claudebar"
+# Fully qualified: upstream ClaudeBar is in homebrew/cask, so a bare
+# `claudebar` token resolves to their build rather than this tap's.
+echo "    brew install --cask $OWNER/tap/claudebar"

@@ -3,8 +3,7 @@
 Homebrew tap for my macOS apps.
 
 ```bash
-brew tap johnfoland/tap
-brew install --cask claudebar
+brew install --cask johnfoland/tap/claudebar
 ```
 
 ## ClaudeBar
@@ -14,6 +13,22 @@ Gemini, Copilot and others. This is a build of
 [my fork](https://github.com/johnfoland/ClaudeBar) of
 [tddworks/ClaudeBar](https://github.com/tddworks/ClaudeBar).
 
+### Use the full name, not just `claudebar`
+
+Upstream ClaudeBar is in `homebrew/cask`, so that tap defines a `claudebar`
+token too. `brew install --cask claudebar` installs **upstream's** build, not
+this one — tapping first does not change that. Always spell it
+`johnfoland/tap/claudebar`, which also auto-taps, so there is no separate
+`brew tap` step.
+
+Both casks install the same `/Applications/ClaudeBar.app` and cannot coexist.
+To switch from upstream's to this one:
+
+```bash
+brew uninstall --cask claudebar
+brew install --cask johnfoland/tap/claudebar
+```
+
 ### If the app won't open
 
 Unless the release was signed with a Developer ID and notarized, macOS
@@ -21,7 +36,7 @@ Gatekeeper will block it, because Homebrew quarantines what it installs.
 Install it without the quarantine flag:
 
 ```bash
-brew install --cask --no-quarantine claudebar
+brew install --cask --no-quarantine johnfoland/tap/claudebar
 ```
 
 If you already installed it and macOS says the app "is damaged" or "cannot be
@@ -34,7 +49,7 @@ xattr -dr com.apple.quarantine /Applications/ClaudeBar.app
 ### Updating
 
 ```bash
-brew upgrade --cask claudebar
+brew upgrade --cask johnfoland/tap/claudebar
 ```
 
 Sparkle's built-in updater is switched off in fork builds — the bundled appcast
@@ -44,8 +59,8 @@ stock one. Homebrew is the update path.
 ### Uninstalling
 
 ```bash
-brew uninstall --cask claudebar          # remove the app
-brew uninstall --zap --cask claudebar    # also remove settings, logs and caches
+brew uninstall --cask johnfoland/tap/claudebar         # remove the app
+brew uninstall --zap --cask johnfoland/tap/claudebar   # also settings, logs, caches
 ```
 
 ## How this tap stays current
