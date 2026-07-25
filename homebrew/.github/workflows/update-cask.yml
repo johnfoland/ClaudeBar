@@ -30,6 +30,31 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # This workflow can propagate the cask but not itself: GitHub refuses a
+      # GITHUB_TOKEN push that touches .github/workflows/**, so a change to the
+      # canonical copy in ClaudeBar has to be copied across by hand (or by
+      # re-running scripts/bootstrap-tap.sh).
+      #
+      # That gap is not theoretical. This tap ran a superseded copy for a day —
+      # one that bailed out whenever the version was unchanged and so never
+      # looked at the cask body — while every hourly run reported success. Two
+      # separate cask fixes sat in ClaudeBar the whole time and never shipped.
+      # Warn rather than rot quietly.
+      - name: Warn if this workflow has drifted from the canonical copy
+        run: |
+          CANON="$RUNNER_TEMP/update-cask.yml"
+          SELF=.github/workflows/update-cask.yml
+          URL="https://raw.githubusercontent.com/johnfoland/ClaudeBar/mine/homebrew/$SELF"
+
+          if ! curl --fail --silent --show-error --location -o "$CANON" "$URL"; then
+            echo "::warning::Could not fetch the canonical workflow to compare against."
+            exit 0
+          fi
+
+          if ! cmp -s "$CANON" "$SELF"; then
+            echo "::warning::$SELF differs from ClaudeBar's canonical copy at homebrew/$SELF. GITHUB_TOKEN cannot push to .github/workflows, so copy it across by hand — until then this tap is running superseded logic."
+          fi
+
       - name: Update cask if a newer release exists
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

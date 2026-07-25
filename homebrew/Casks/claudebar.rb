@@ -23,8 +23,10 @@ cask "claudebar" do
     regex(/^fork[._-]v?(.+)$/i)
   end
 
-  # Project.swift sets a macOS 15.0 deployment target.
-  depends_on macos: ">= :sequoia"
+  # Project.swift sets a macOS 15.0 deployment target. The bare symbol is a
+  # minimum-version requirement (Homebrew parses it with a >= comparator); the
+  # ">= :sequoia" string form is deprecated and warns on install.
+  depends_on macos: :sequoia
 
   app "ClaudeBar.app"
 
