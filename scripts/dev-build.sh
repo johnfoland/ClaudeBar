@@ -10,11 +10,17 @@
 #   ./scripts/dev-build.sh --open         # generate + open the workspace in Xcode
 #   ./scripts/dev-build.sh --test         # generate + run the test suite
 #   ./scripts/dev-build.sh --release      # generate + Release build
-#   ./scripts/dev-build.sh --install      # Release build -> /Applications/ClaudeBar.app
+#   ./scripts/dev-build.sh --install      # archive + install to /Applications
+#   ./scripts/dev-build.sh --zip          # archive -> .build/ClaudeBar-<version>.zip
 #   ./scripts/dev-build.sh --clean        # nuke generated project + derived data first
 #
 # Flags combine, e.g.: ./scripts/dev-build.sh --clean --test
-# Add --skip-generate to reuse an existing workspace (saves ~30s on repeat runs).
+#   --skip-generate  reuse an existing workspace (saves ~30s on repeat runs)
+#   --universal      archive for arm64 + x86_64 instead of this Mac's arch
+#
+# --install and --zip archive rather than plain-build, which is what strips the
+# SwiftUI preview scaffolding out of the bundle. Neither one needs the Xcode GUI,
+# but both need Xcode.app installed for the toolchain.
 
 set -euo pipefail
 
@@ -22,17 +28,20 @@ ACTION="build"
 CONFIG="Debug"
 CLEAN="no"
 GENERATE="yes"
+UNIVERSAL="no"
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --open)          ACTION="open"; shift ;;
         --test)          ACTION="test"; shift ;;
         --install)       ACTION="install"; CONFIG="Release"; shift ;;
+        --zip)           ACTION="zip"; CONFIG="Release"; shift ;;
         --release)       CONFIG="Release"; shift ;;
         --debug)         CONFIG="Debug"; shift ;;
         --clean)         CLEAN="yes"; shift ;;
         --skip-generate) GENERATE="no"; shift ;;
-        -h|--help)       sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --universal)     UNIVERSAL="yes"; shift ;;
+        -h|--help)       sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *)               echo "Unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -46,9 +55,24 @@ die()  { printf '\033[1;31mxx\033[0m  %s\n' "$1" >&2; exit 1; }
 command -v tuist >/dev/null 2>&1 || die "Tuist not found. Install it with: brew install --cask tuist"
 command -v xcodebuild >/dev/null 2>&1 || die "xcodebuild not found. Install Xcode from the App Store."
 
+# The Command Line Tools alone are not enough: this project needs a real Xcode
+# for the macOS SDK, the Swift macro toolchain, and `xcodebuild archive`.
+# You never have to *open* Xcode — but it has to be installed and selected.
+SDK_ROOT="$(xcode-select -p 2>/dev/null || true)"
+case "$SDK_ROOT" in
+    *Xcode*) : ;;
+    *) die "xcode-select points at '${SDK_ROOT:-nothing}', not an Xcode.app.
+    Install Xcode, then point the toolchain at it:
+        xcodes install --latest        # or: mas install 497799835
+        sudo xcode-select -s /Applications/Xcode.app
+        sudo xcodebuild -license accept" ;;
+esac
+
 DERIVED="$PWD/.build/derived"
 WORKSPACE="ClaudeBar.xcworkspace"
-DEST='platform=macOS,arch=arm64'
+ARCH="$(uname -m)"
+DEST="platform=macOS,arch=$ARCH"
+ENTITLEMENTS="Sources/App/entitlements.plist"
 
 # --- Generate ---------------------------------------------------------------
 
@@ -93,21 +117,68 @@ fi
 
 # --- Build ------------------------------------------------------------------
 
-info "Building $CONFIG"
-xcodebuild build \
+if [ "$ACTION" = "build" ]; then
+    # Plain build — fast verification. The bundle it leaves in DerivedData is
+    # fine to run from Xcode but is not a distributable app (see below).
+    info "Building $CONFIG"
+    xcodebuild build \
+        -scheme ClaudeBar \
+        -workspace "$WORKSPACE" \
+        -destination "$DEST" \
+        -derivedDataPath "$DERIVED" \
+        -skipMacroValidation \
+        -configuration "$CONFIG"
+
+    APP="$DERIVED/Build/Products/$CONFIG/ClaudeBar.app"
+    [ -d "$APP" ] || die "Build reported success but $APP is missing."
+    info "Built $APP"
+    exit 0
+fi
+
+# --- Archive (install / zip) ------------------------------------------------
+
+# `xcodebuild build` is NOT good enough for something you install. The app
+# target sets ENABLE_DEBUG_DYLIB=YES for SwiftUI previews, so an ordinary build
+# splits the binary and leaves a ClaudeBar.debug.dylib inside the bundle. An
+# archive build is an install-action build, which drops the preview scaffolding
+# and produces the same single-binary bundle upstream ships. Mirrors the
+# `xcodebuild archive` invocation in .github/workflows/release.yml.
+
+ARCHIVE="$PWD/.build/ClaudeBar.xcarchive"
+rm -rf "$ARCHIVE"
+
+if [ "$UNIVERSAL" = "yes" ]; then
+    ARCHS_ARG='arm64 x86_64'
+    info "Archiving Release (universal: arm64 + x86_64)"
+else
+    ARCHS_ARG="$ARCH"
+    info "Archiving Release ($ARCH)"
+fi
+
+xcodebuild archive \
     -scheme ClaudeBar \
     -workspace "$WORKSPACE" \
-    -destination "$DEST" \
+    -configuration Release \
+    -archivePath "$ARCHIVE" \
+    -destination 'generic/platform=macOS' \
     -derivedDataPath "$DERIVED" \
-    -configuration "$CONFIG"
+    -skipMacroValidation \
+    ARCHS="$ARCHS_ARG" \
+    ONLY_ACTIVE_ARCH=NO \
+    CODE_SIGN_IDENTITY="-" \
+    CODE_SIGNING_REQUIRED=NO \
+    CODE_SIGNING_ALLOWED=NO
 
-APP="$DERIVED/Build/Products/$CONFIG/ClaudeBar.app"
-[ -d "$APP" ] || die "Build reported success but $APP is missing."
-info "Built $APP"
+STAGED="$PWD/.build/ClaudeBar.app"
+rm -rf "$STAGED"
+cp -R "$ARCHIVE/Products/Applications/ClaudeBar.app" "$STAGED"
+APP="$STAGED"
 
-[ "$ACTION" = "install" ] || exit 0
+if [ -e "$APP/Contents/Frameworks/ClaudeBar.debug.dylib" ]; then
+    die "Archive still contains the preview debug dylib — that shouldn't happen."
+fi
 
-# --- Install ----------------------------------------------------------------
+# --- Stamp ------------------------------------------------------------------
 
 # Stamp the bundle (not the repo) so your build is identifiable and so Sparkle
 # doesn't quietly replace it with an official tddworks release. Patching the
@@ -122,8 +193,36 @@ PLIST="$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(git rev-list --count HEAD)" "$PLIST"
 /usr/libexec/PlistBuddy -c "Set :SUEnableAutomaticChecks false" "$PLIST" 2>/dev/null || true
 
-# Re-sign ad-hoc: editing Info.plist invalidates the signature the build made.
-codesign --force --deep --sign - "$APP"
+# Sign ad-hoc. The archive was built with CODE_SIGNING_ALLOWED=NO, and editing
+# Info.plist would invalidate a signature anyway. Nested code first, then the
+# top level with entitlements — --deep would otherwise stamp the app's
+# entitlements onto every embedded framework.
+info "Signing ad-hoc"
+codesign --force --deep --sign - "$APP" >/dev/null 2>&1
+codesign --force --sign - --entitlements "$ENTITLEMENTS" "$APP" >/dev/null 2>&1
+codesign --verify --strict "$APP" || die "Ad-hoc signing failed verification."
+
+# --- Zip --------------------------------------------------------------------
+
+if [ "$ACTION" = "zip" ]; then
+    ZIP="$PWD/.build/ClaudeBar-$STAMP.zip"
+    rm -f "$ZIP"
+    # ditto --sequesterRsrc --keepParent is the archiver Apple expects for
+    # .app bundles; plain `zip` loses symlinks and breaks the signature.
+    ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+    info "Wrote $ZIP"
+    echo "    version:  $STAMP"
+    echo "    sha256:   $(shasum -a 256 "$ZIP" | cut -d' ' -f1)"
+    echo "    size:     $(du -h "$ZIP" | cut -f1)"
+    exit 0
+fi
+
+# --- Install ----------------------------------------------------------------
+
+if [ -d /Applications/ClaudeBar.app ] && [ ! -w /Applications/ClaudeBar.app ]; then
+    die "/Applications/ClaudeBar.app isn't writable by you — it was probably
+    installed by Homebrew. Remove it first:  brew uninstall --cask claudebar"
+fi
 
 if pgrep -x ClaudeBar >/dev/null 2>&1; then
     info "Quitting the running ClaudeBar"
@@ -137,4 +236,7 @@ ditto "$APP" /Applications/ClaudeBar.app
 xattr -dr com.apple.quarantine /Applications/ClaudeBar.app 2>/dev/null || true
 
 open -a /Applications/ClaudeBar.app
-info "Installed and launched. Settings live in ~/.claudebar/settings.json"
+info "Installed and launched — look for the icon in your menu bar."
+echo "    version:  $STAMP"
+echo "    settings: ~/.claudebar/settings.json"
+echo "    logs:     ~/Library/Logs/ClaudeBar/ClaudeBar.log"

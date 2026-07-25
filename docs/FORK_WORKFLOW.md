@@ -245,8 +245,20 @@ touches `Project.swift` or `Tuist/Package.swift` — which is the usual cause of
 
 ```bash
 brew install --cask tuist      # project generation
-# plus Xcode from the App Store (macOS 15+ deployment target, Swift 6.2)
+brew install xcodesorg/made/xcodes  # optional: manage Xcode from the CLI
+xcodes install --latest        # or install Xcode from the App Store
+sudo xcode-select -s /Applications/Xcode.app
+sudo xcodebuild -license accept
 ```
+
+Xcode.app has to be installed even if you never open it — the Command Line
+Tools alone don't provide the macOS SDK, the Swift macro toolchain, or
+`xcodebuild archive`. `dev-build.sh` checks this up front and tells you if
+`xcode-select` is pointing at the wrong place, rather than failing halfway
+through a build.
+
+Everything below is command line only. `--open` is there if you ever want the
+GUI, and nothing else needs it.
 
 ### The command
 
@@ -320,21 +332,98 @@ way, and upstream changing its workflow files can't conflict with yours.
 
 ### Installing your own build
 
-`--install` builds Release, copies the app to `/Applications`, and:
+The whole thing, from nothing to a running menu bar app:
 
-- **stamps the version** as `<upstream-version>-fork.<sha>` so you can tell your
-  build apart from an official one in the About box;
-- **turns off Sparkle's automatic update check** in the installed bundle.
+```bash
+git clone https://github.com/johnfoland/ClaudeBar.git
+cd ClaudeBar
+./scripts/install-hooks.sh
+./scripts/dev-build.sh --install
+```
 
-That second one matters. ClaudeBar ships with Sparkle pointed at
+Roughly 10 minutes the first time (most of it dependency resolution and the
+Release compile), a couple of minutes after that. It ends with the app running
+in your menu bar.
+
+If you already have the official cask installed, remove it first — its
+`/Applications/ClaudeBar.app` is root-owned and can't be overwritten:
+
+```bash
+brew uninstall --cask claudebar
+```
+
+**Why it archives instead of just building.** The app target sets
+`ENABLE_DEBUG_DYLIB=YES` for SwiftUI previews, which makes an ordinary
+`xcodebuild build` split the binary and leave a `ClaudeBar.debug.dylib` inside
+the bundle. That runs from Xcode but isn't a real app bundle. `--install` uses
+`xcodebuild archive` — an install-action build, which drops the preview
+scaffolding — and mirrors the invocation in upstream's `release.yml`. The
+script asserts the debug dylib is gone before installing.
+
+It then:
+
+- **stamps the version** as `<upstream-version>-fork.<sha>`, so `About` tells
+  you exactly which commit you're running;
+- **turns off Sparkle's automatic update check** in the installed bundle;
+- **signs ad-hoc** — nested code first, then the top level with the app's
+  entitlements, and verifies with `codesign --verify --strict`.
+
+The Sparkle part matters. ClaudeBar ships pointed at
 `tddworks.github.io/ClaudeBar/appcast.xml`, and the version in
-`Sources/App/Info.plist` is only bumped by the release workflow — so a local
-build reports `1.0.0`, sees an official release as "newer", and offers to
-replace your fork with stock ClaudeBar. The script patches the *built bundle*
-rather than `Info.plist` so your diff against upstream stays empty there.
+`Sources/App/Info.plist` is only bumped by the release workflow — so an
+unpatched local build reports `1.0.0`, sees any official release as "newer",
+and offers to replace your fork with stock ClaudeBar. The script patches the
+*built bundle* rather than `Info.plist`, so your diff against upstream stays
+empty there.
 
-If you'd rather keep official updates and lose your changes on each one, delete
-the `SUEnableAutomaticChecks` line from `scripts/dev-build.sh`.
+To update later:
+
+```bash
+git pull && ./scripts/dev-build.sh --install
+```
+
+**Ad-hoc signing caveat:** Gatekeeper is fine with this — the app was built
+locally, never downloaded, so there's no quarantine flag to clear. The one
+thing that may not work is *Launch at Login*: it uses `SMAppService`, which
+sometimes rejects ad-hoc signatures. If that toggle doesn't stick, this is why,
+and the fix is a real Developer ID certificate rather than anything in the
+code.
+
+### Getting a build without building
+
+`fork-ci.yml` packages the app on every push to `mine` and uploads it as a
+workflow artifact:
+
+```bash
+gh run download --repo johnfoland/ClaudeBar --name "ClaudeBar-<sha>"
+unzip ClaudeBar-*.zip -d /Applications/
+```
+
+Useful from a Mac without the toolchain installed. Artifacts are kept 14 days.
+
+Note that a *downloaded* zip does carry the quarantine flag, so you'd need
+`xattr -dr com.apple.quarantine /Applications/ClaudeBar.app` — which
+`--install` handles for you on a local build.
+
+### Toward a Homebrew tap
+
+`./scripts/dev-build.sh --zip` produces exactly what a cask consumes — a
+`ditto`-archived bundle plus its sha256:
+
+```bash
+./scripts/dev-build.sh --zip --universal
+# .build/ClaudeBar-0.4.73-fork.abc1234.zip
+#     sha256: 9f2c...
+```
+
+`--universal` builds arm64 + x86_64, which only matters if you'd install on an
+Intel Mac as well.
+
+What's still missing for a working tap is a stable download URL, which means
+GitHub Releases on this fork: a workflow that tags, archives, and uploads the
+zip, and a `homebrew-tap` repo whose cask points at the release asset with
+`version` and `sha256`. That's a self-contained piece of work — none of it
+changes anything above.
 
 ### Inherited CI
 
@@ -363,9 +452,11 @@ git diff --stat main..mine                 # your changed files
 git log --oneline mine..main               # upstream commits you haven't merged
 
 # Build
-./scripts/dev-build.sh --open              # work in Xcode
+./scripts/dev-build.sh                     # quick Debug build
 ./scripts/dev-build.sh --test              # verify
-./scripts/dev-build.sh --install           # ship it to /Applications
+./scripts/dev-build.sh --install           # archive + install to /Applications
+./scripts/dev-build.sh --zip --universal   # archive -> zip + sha256 (for a cask)
+./scripts/dev-build.sh --open              # ...if you do want Xcode
 
 # Escape hatches
 git merge --abort                          # back out an in-progress merge
