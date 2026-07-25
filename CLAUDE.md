@@ -405,7 +405,7 @@ what keeps syncs painless.
 ./scripts/dev-build.sh --open     # generate project + open Xcode
 ./scripts/next-version.sh         # what the next release version would be
 ./scripts/fork-release.sh 0.4.73-fork.1 --universal   # release zip + sha256
-./scripts/bootstrap-tap.sh        # create/sync johnfoland/homebrew-tap
+./scripts/bootstrap-tap.sh        # create the tap repo (one-off; edits sync themselves)
 ```
 
 **Releasing is automatic — do not tag by hand.** Every push to `mine` runs
@@ -442,9 +442,12 @@ install-action build and drops it, matching upstream's `release.yml`.
 - `.github/workflows/fork-release.yml` — on every push to `mine`: test, version,
   archive, sign, publish a GitHub Release, tag it. Signing is secrets-gated —
   ad-hoc without them, Developer ID + notarized with them, no edits either way.
-- `homebrew/` — contents of the `johnfoland/homebrew-tap` repo. Its
-  `update-cask.yml` polls this repo hourly and rewrites the cask; it lives on
-  the tap side so it needs no cross-repo token.
+- `homebrew/` — contents of the `johnfoland/homebrew-tap` repo, and the source
+  of truth for the cask. Its `update-cask.yml` polls this repo hourly, pulls
+  `homebrew/Casks/claudebar.rb` from `mine`, stamps the newest release's version
+  and sha256 into it, and commits if anything changed — so cask edits propagate
+  on their own. It lives on the tap side so it needs no cross-repo token.
+  `bootstrap-tap.sh` is only for creating the tap repo in the first place.
 - `scripts/hooks/` — warns after a merge or checkout when `Project.swift` or
   `Tuist/Package.swift` changed and the generated Xcode project is stale.
 

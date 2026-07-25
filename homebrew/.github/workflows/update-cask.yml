@@ -55,46 +55,73 @@ jobs:
 
           VERSION="${TAG#fork-v}"
           CURRENT="$(sed -n 's/^  version "\(.*\)"$/\1/p' "$CASK")"
+          CURRENT_SHA="$(sed -n 's/^  sha256 "\(.*\)"$/\1/p' "$CASK")"
 
           if [ "$VERSION" = "$CURRENT" ]; then
-            echo "Cask is already on $VERSION."
-            exit 0
+            # Same release, so the digest cannot have changed — reuse it rather
+            # than re-downloading 12MB every hour. The cask body may still have
+            # changed upstream, which the comparison at the end catches.
+            SHA256="$CURRENT_SHA"
+          else
+            # Belt and braces: never move the cask to an older version, even if
+            # the release list is somehow out of order.
+            NEWEST="$(printf '%s\n%s\n' "$CURRENT" "$VERSION" | sort -V | tail -1)"
+            if [ "$NEWEST" != "$VERSION" ]; then
+              echo "::notice::Newest release $VERSION is older than the cask's $CURRENT — leaving it alone."
+              exit 0
+            fi
+
+            ASSET="ClaudeBar-$VERSION.zip"
+            URL="https://github.com/$REPO/releases/download/$TAG/$ASSET"
+            echo "Updating $CURRENT -> $VERSION"
+
+            # Hash the asset actually served from the release URL, rather than
+            # trusting a digest published alongside it.
+            if ! curl --fail --silent --show-error --location -o "$RUNNER_TEMP/$ASSET" "$URL"; then
+              echo "::error::Release $TAG exists but $ASSET could not be downloaded from it."
+              exit 1
+            fi
+            SHA256="$(sha256sum "$RUNNER_TEMP/$ASSET" | cut -d' ' -f1)"
           fi
 
-          # Belt and braces: never move the cask to an older version, even if the
-          # release list is somehow out of order.
-          NEWEST="$(printf '%s\n%s\n' "$CURRENT" "$VERSION" | sort -V | tail -1)"
-          if [ "$NEWEST" != "$VERSION" ]; then
-            echo "::notice::Newest release $VERSION is older than the cask's $CURRENT — leaving it alone."
-            exit 0
-          fi
-
-          ASSET="ClaudeBar-$VERSION.zip"
-          URL="https://github.com/$REPO/releases/download/$TAG/$ASSET"
-
-          echo "Updating $CURRENT -> $VERSION"
-
-          # Hash the asset actually served from the release URL, rather than
-          # trusting a digest published alongside it.
-          if ! curl --fail --silent --show-error --location -o "$RUNNER_TEMP/$ASSET" "$URL"; then
-            echo "::error::Release $TAG exists but $ASSET could not be downloaded from it."
+          # The cask body itself lives in the app repo, at homebrew/Casks/. Pull
+          # the canonical copy and stamp the release into it, rather than only
+          # rewriting two lines of whatever is already here — otherwise a change
+          # to the cask (a new zap path, a postflight block) would never reach
+          # the tap without someone re-running bootstrap-tap.sh by hand.
+          TEMPLATE="$RUNNER_TEMP/claudebar.rb"
+          if ! curl --fail --silent --show-error --location -o "$TEMPLATE" \
+              "https://raw.githubusercontent.com/$REPO/mine/homebrew/Casks/claudebar.rb"; then
+            echo "::error::Could not fetch the canonical cask from $REPO."
             exit 1
           fi
-          SHA256="$(sha256sum "$RUNNER_TEMP/$ASSET" | cut -d' ' -f1)"
 
           # Anchored to the two-space indent these keys have inside the cask
           # block, so neither pattern can match anything else in the file.
-          sed -i "s|^  version \".*\"$|  version \"$VERSION\"|" "$CASK"
-          sed -i "s|^  sha256 \".*\"$|  sha256 \"$SHA256\"|" "$CASK"
+          sed -i "s|^  version \".*\"$|  version \"$VERSION\"|" "$TEMPLATE"
+          sed -i "s|^  sha256 \".*\"$|  sha256 \"$SHA256\"|" "$TEMPLATE"
 
           # Re-read rather than assuming sed matched.
-          test "$(sed -n 's/^  version "\(.*\)"$/\1/p' "$CASK")" = "$VERSION" \
+          test "$(sed -n 's/^  version "\(.*\)"$/\1/p' "$TEMPLATE")" = "$VERSION" \
             || { echo "::error::version rewrite did not take effect."; exit 1; }
-          test "$(sed -n 's/^  sha256 "\(.*\)"$/\1/p' "$CASK")" = "$SHA256" \
+          test "$(sed -n 's/^  sha256 "\(.*\)"$/\1/p' "$TEMPLATE")" = "$SHA256" \
             || { echo "::error::sha256 rewrite did not take effect."; exit 1; }
+
+          if cmp -s "$TEMPLATE" "$CASK"; then
+            echo "Cask is already up to date at $VERSION."
+            exit 0
+          fi
+
+          cp "$TEMPLATE" "$CASK"
+
+          if [ "$VERSION" = "$CURRENT" ]; then
+            MESSAGE="claudebar: sync cask body at $VERSION"
+          else
+            MESSAGE="claudebar $VERSION"
+          fi
 
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add "$CASK"
-          git commit -m "claudebar $VERSION"
+          git commit -m "$MESSAGE"
           git push

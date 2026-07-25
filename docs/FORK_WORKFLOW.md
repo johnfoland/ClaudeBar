@@ -458,6 +458,13 @@ to this repo — a PAT with `contents: write` on `homebrew-tap` — and the rele
 notifies the tap directly, so the cask updates in seconds. Everything works
 without it; the only difference is the wait.
 
+**Editing the cask.** `homebrew/Casks/claudebar.rb` in *this* repo is the source
+of truth. The tap's hourly job fetches it from `mine`, stamps the newest
+release's version and sha256 into it, and commits if the result differs from
+what it already has — so a new `zap` path or a changed `postflight` propagates
+on its own, with no release needed and nothing to re-run.
+`scripts/bootstrap-tap.sh` is only for creating the tap repo in the first place.
+
 #### How the version number is chosen
 
 `scripts/next-version.sh` computes `<upstream-version>-fork.<n>`:
