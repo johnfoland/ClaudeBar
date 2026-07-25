@@ -34,5 +34,21 @@ jobs:
       - name: Test
         run: ./scripts/dev-build.sh --test
 
-      - name: Release build
-        run: ./scripts/dev-build.sh --release --skip-generate
+      # Archives rather than plain-builds Release: same compile work, but it
+      # also verifies the bundle that --install puts in /Applications, and
+      # leaves a downloadable .app so you can try a build without a local
+      # toolchain. This is the artifact a Homebrew cask would point at.
+      - name: Package app
+        run: ./scripts/dev-build.sh --zip --skip-generate
+
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClaudeBar-${{ github.sha }}
+          path: .build/ClaudeBar-*.zip
+          # .build is a dot-directory, and upload-artifact treats every path
+          # component starting with "." as hidden and silently skips it. The
+          # glob above matches only the packaged app, so this stays narrow.
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14

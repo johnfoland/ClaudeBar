@@ -399,14 +399,20 @@ what keeps syncs painless.
 ```bash
 ./scripts/install-hooks.sh        # once per clone
 ./scripts/sync-upstream.sh        # mirror main, merge into mine (usually automatic)
-./scripts/dev-build.sh --open     # generate project + open Xcode
 ./scripts/dev-build.sh --test     # generate + run tests
-./scripts/dev-build.sh --install  # Release build -> /Applications
+./scripts/dev-build.sh --install  # archive + install to /Applications
+./scripts/dev-build.sh --zip      # archive -> .build/ClaudeBar-<version>.zip
+./scripts/dev-build.sh --open     # generate project + open Xcode
 ```
 
 Prefer `./scripts/dev-build.sh` over raw `tuist`/`xcodebuild` — it runs
 `scripts/fix-swiftterm-metal.sh`, without which the build fails on SwiftTerm's
 duplicate `Shaders.metal`.
+
+`--install` and `--zip` use `xcodebuild archive`, not `xcodebuild build`: the
+app target sets `ENABLE_DEBUG_DYLIB=YES` for SwiftUI previews, so an ordinary
+Release build leaves a `ClaudeBar.debug.dylib` in the bundle. Archiving is an
+install-action build and drops it, matching upstream's `release.yml`.
 
 ### Automation
 
