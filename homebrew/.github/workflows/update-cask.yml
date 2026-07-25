@@ -39,9 +39,14 @@ jobs:
           CASK=Casks/claudebar.rb
           REPO=johnfoland/ClaudeBar
 
-          TAG="$(gh release list --repo "$REPO" --limit 20 --json tagName,isDraft,isPrerelease \
-            --jq '[.[] | select(.isDraft == false and .isPrerelease == false)
-                       | select(.tagName | startswith("fork-v"))][0].tagName // ""')"
+          # Highest version, not most recently published. `gh release list` is
+          # ordered by recency, so taking [0] would walk the cask backwards if an
+          # older version were ever published last. sort -V compares embedded
+          # numbers numerically, so fork.10 sorts above fork.9.
+          TAG="$(gh release list --repo "$REPO" --limit 100 --json tagName,isDraft,isPrerelease \
+            --jq '.[] | select(.isDraft == false and .isPrerelease == false)
+                      | .tagName | select(startswith("fork-v"))' \
+            | sort -V | tail -1)"
 
           if [ -z "$TAG" ]; then
             echo "::notice::No fork-v* release published yet — nothing to do."
@@ -53,6 +58,14 @@ jobs:
 
           if [ "$VERSION" = "$CURRENT" ]; then
             echo "Cask is already on $VERSION."
+            exit 0
+          fi
+
+          # Belt and braces: never move the cask to an older version, even if the
+          # release list is somehow out of order.
+          NEWEST="$(printf '%s\n%s\n' "$CURRENT" "$VERSION" | sort -V | tail -1)"
+          if [ "$NEWEST" != "$VERSION" ]; then
+            echo "::notice::Newest release $VERSION is older than the cask's $CURRENT — leaving it alone."
             exit 0
           fi
 

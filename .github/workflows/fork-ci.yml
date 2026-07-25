@@ -8,9 +8,10 @@ name: Fork CI
 # Editing upstream's workflow files to add `mine` would work too, but those are
 # upstream-owned files — a separate file keeps the fork's diff additive.
 
+# Pull requests only. Pushes to `mine` are covered by fork-release.yml, which
+# runs the same tests before it publishes — having both on push would build the
+# app twice per merge for no extra signal.
 on:
-  push:
-    branches: [mine]
   pull_request:
     branches: [mine]
   workflow_dispatch:
