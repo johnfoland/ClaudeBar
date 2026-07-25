@@ -2,6 +2,9 @@ import Testing
 import Foundation
 import Mockable
 @testable import Domain
+// AIProviders (the AIProviderRepository the monitor takes) lives in
+// Infrastructure, as in QuotaMonitorTests.
+@testable import Infrastructure
 
 /// Fork-only: the menu bar label reads `"83% | 25m • 51% | 3d"` instead of
 /// upstream's `"5h 83% · 25m | 7d 51% · 3d"`.
