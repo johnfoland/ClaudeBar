@@ -28,6 +28,23 @@ cask "claudebar" do
 
   app "ClaudeBar.app"
 
+  # Homebrew quarantines what it installs, and Gatekeeper refuses to open a
+  # quarantined app that is not Developer ID signed and notarized. Fork releases
+  # are ad-hoc signed, so clear the attribute here rather than making every
+  # install carry HOMEBREW_CASK_OPTS=--no-quarantine.
+  #
+  # `command.run` rather than `system_command`: the latter goes through
+  # SystemCommand.run!, which raises on a non-zero exit. `xattr -d` can exit
+  # non-zero when the attribute is not there — which is exactly what happens
+  # once releases are notarized — and that would turn a no-op into a failed
+  # install. `run` defaults to must_succeed: false; stated explicitly here so
+  # the tolerance is deliberate rather than incidental.
+  postflight do
+    command.run "/usr/bin/xattr",
+                args:         ["-dr", "com.apple.quarantine", "#{appdir}/ClaudeBar.app"],
+                must_succeed: false
+  end
+
   # ~/.claudebar holds settings.json plus imported themes and extensions.
   zap trash: [
     "~/.claudebar",
