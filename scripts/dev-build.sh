@@ -12,15 +12,22 @@
 #   ./scripts/dev-build.sh --release      # generate + Release build
 #   ./scripts/dev-build.sh --install      # archive + install to /Applications
 #   ./scripts/dev-build.sh --zip          # archive -> .build/ClaudeBar-<version>.zip
+#   ./scripts/dev-build.sh --stage        # archive -> signed .build/ClaudeBar.app, no zip
 #   ./scripts/dev-build.sh --clean        # nuke generated project + derived data first
 #
 # Flags combine, e.g.: ./scripts/dev-build.sh --clean --test
 #   --skip-generate  reuse an existing workspace (saves ~30s on repeat runs)
 #   --universal      archive for arm64 + x86_64 instead of this Mac's arch
 #
-# --install and --zip archive rather than plain-build, which is what strips the
-# SwiftUI preview scaffolding out of the bundle. Neither one needs the Xcode GUI,
-# but both need Xcode.app installed for the toolchain.
+# Environment overrides (set by scripts/fork-release.sh; ignore for local work):
+#   CLAUDEBAR_VERSION        version to stamp instead of <upstream>-fork.<sha>
+#   CLAUDEBAR_SIGN_IDENTITY  codesign identity instead of "-" (ad-hoc). A real
+#                            Developer ID also turns on the hardened runtime and
+#                            a secure timestamp, both preconditions for notarizing.
+#
+# --install, --zip and --stage archive rather than plain-build, which is what
+# strips the SwiftUI preview scaffolding out of the bundle. None of them need the
+# Xcode GUI, but all need Xcode.app installed for the toolchain.
 
 set -euo pipefail
 
@@ -36,12 +43,13 @@ while [ $# -gt 0 ]; do
         --test)          ACTION="test"; shift ;;
         --install)       ACTION="install"; CONFIG="Release"; shift ;;
         --zip)           ACTION="zip"; CONFIG="Release"; shift ;;
+        --stage)         ACTION="stage"; CONFIG="Release"; shift ;;
         --release)       CONFIG="Release"; shift ;;
         --debug)         CONFIG="Debug"; shift ;;
         --clean)         CLEAN="yes"; shift ;;
         --skip-generate) GENERATE="no"; shift ;;
         --universal)     UNIVERSAL="yes"; shift ;;
-        -h|--help)       sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help)       sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *)               echo "Unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -184,23 +192,52 @@ fi
 # doesn't quietly replace it with an official tddworks release. Patching the
 # built .app instead of Sources/App/Info.plist keeps your diff against upstream
 # empty here — Info.plist is rewritten on every upstream release.
+#
+# A release build overrides the stamp with CLAUDEBAR_VERSION: a cask's `version`
+# has to match a published tag, and "-fork.<sha>" changes on every commit.
 UPSTREAM_VERSION="$(sed -n 's/^## \[\([0-9][^]]*\)\].*/\1/p' CHANGELOG.md | head -1)"
 SHA="$(git rev-parse --short HEAD)"
-STAMP="${UPSTREAM_VERSION:-0.0.0}-fork.$SHA"
+STAMP="${CLAUDEBAR_VERSION:-${UPSTREAM_VERSION:-0.0.0}-fork.$SHA}"
 PLIST="$APP/Contents/Info.plist"
 
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $STAMP" "$PLIST"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(git rev-list --count HEAD)" "$PLIST"
 /usr/libexec/PlistBuddy -c "Set :SUEnableAutomaticChecks false" "$PLIST" 2>/dev/null || true
 
-# Sign ad-hoc. The archive was built with CODE_SIGNING_ALLOWED=NO, and editing
+# Sign. The archive was built with CODE_SIGNING_ALLOWED=NO, and editing
 # Info.plist would invalidate a signature anyway. Nested code first, then the
 # top level with entitlements — --deep would otherwise stamp the app's
 # entitlements onto every embedded framework.
-info "Signing ad-hoc"
-codesign --force --deep --sign - "$APP" >/dev/null 2>&1
-codesign --force --sign - --entitlements "$ENTITLEMENTS" "$APP" >/dev/null 2>&1
-codesign --verify --strict "$APP" || die "Ad-hoc signing failed verification."
+#
+# Ad-hoc is the default and is all a local build needs. A release run passes a
+# Developer ID through CLAUDEBAR_SIGN_IDENTITY, which additionally needs the
+# hardened runtime and a secure timestamp — notarization rejects a submission
+# missing either, and an ad-hoc signature can carry neither.
+IDENTITY="${CLAUDEBAR_SIGN_IDENTITY:--}"
+
+if [ "$IDENTITY" = "-" ]; then
+    info "Signing ad-hoc"
+    codesign --force --deep --sign - "$APP" >/dev/null 2>&1
+    codesign --force --sign - --entitlements "$ENTITLEMENTS" "$APP" >/dev/null 2>&1
+else
+    info "Signing with: $IDENTITY"
+    codesign --force --deep --options runtime --timestamp --sign "$IDENTITY" "$APP"
+    codesign --force --options runtime --timestamp \
+        --entitlements "$ENTITLEMENTS" --sign "$IDENTITY" "$APP"
+fi
+
+codesign --verify --strict "$APP" || die "Signing failed verification."
+
+# --- Stage ------------------------------------------------------------------
+
+# Stop with a signed bundle on disk. scripts/fork-release.sh uses this so it can
+# notarize and staple the .app *before* archiving it — stapling rewrites the
+# bundle, so a zip made beforehand would not contain the ticket.
+if [ "$ACTION" = "stage" ]; then
+    info "Staged $APP"
+    echo "    version:  $STAMP"
+    exit 0
+fi
 
 # --- Zip --------------------------------------------------------------------
 

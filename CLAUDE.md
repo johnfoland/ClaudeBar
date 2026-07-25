@@ -403,7 +403,13 @@ what keeps syncs painless.
 ./scripts/dev-build.sh --install  # archive + install to /Applications
 ./scripts/dev-build.sh --zip      # archive -> .build/ClaudeBar-<version>.zip
 ./scripts/dev-build.sh --open     # generate project + open Xcode
+./scripts/fork-release.sh 0.4.73-fork.1 --universal   # release zip + sha256
 ```
+
+Releases go out by tag (`git tag fork-v0.4.73-fork.1 && git push origin --tags`),
+which publishes a GitHub Release and updates the Homebrew cask in
+`johnfoland/homebrew-tap`. The `fork-v` prefix keeps it from triggering
+upstream's `release.yml`, which fires on `v*`.
 
 Prefer `./scripts/dev-build.sh` over raw `tuist`/`xcodebuild` — it runs
 `scripts/fix-swiftterm-metal.sh`, without which the build fails on SwiftTerm's
@@ -421,6 +427,9 @@ install-action build and drops it, matching upstream's `release.yml`.
   failures open a PR instead of touching `mine`.
 - `.github/workflows/fork-ci.yml` — build + test on push/PR to `mine`
   (upstream's workflows only trigger on `main`/`develop`).
+- `.github/workflows/fork-release.yml` — on a `fork-v*` tag: archive, sign,
+  publish a GitHub Release. Signing is secrets-gated — ad-hoc without them,
+  Developer ID + notarized with them, no edits either way.
 - `scripts/hooks/` — warns after a merge or checkout when `Project.swift` or
   `Tuist/Package.swift` changed and the generated Xcode project is stale.
 

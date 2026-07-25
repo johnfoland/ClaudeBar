@@ -405,25 +405,114 @@ Note that a *downloaded* zip does carry the quarantine flag, so you'd need
 `xattr -dr com.apple.quarantine /Applications/ClaudeBar.app` — which
 `--install` handles for you on a local build.
 
-### Toward a Homebrew tap
+### Releasing to the Homebrew tap
 
-`./scripts/dev-build.sh --zip` produces exactly what a cask consumes — a
-`ditto`-archived bundle plus its sha256:
+The cask lives in [johnfoland/homebrew-tap](https://github.com/johnfoland/homebrew-tap),
+and installs like this:
 
 ```bash
-./scripts/dev-build.sh --zip --universal
-# .build/ClaudeBar-0.4.73-fork.abc1234.zip
+brew install --cask johnfoland/tap/claudebar
+```
+
+**Always use the fully-qualified `johnfoland/tap/claudebar`.** Upstream is
+already distributed through `homebrew/cask` — that is what the bare
+`brew install --cask claudebar` in the project README installs, and BrewTestBot
+bumps it on every tddworks release. Both taps therefore define the token
+`claudebar`, so the unqualified name gets you upstream's stock build rather than
+this fork's. The qualified form is unambiguous, and it auto-taps, so no separate
+`brew tap` step is needed.
+
+Both casks install to the same `/Applications/ClaudeBar.app`, so they cannot be
+installed side by side; see `--adopt` below for switching between them.
+
+Publishing a new version is one tag:
+
+```bash
+git tag fork-v0.4.73-fork.1
+git push origin fork-v0.4.73-fork.1
+```
+
+That fires `.github/workflows/fork-release.yml`, which archives a universal
+build, publishes it as a GitHub Release, and (via a scheduled job in the tap)
+updates the cask's `version`, `url` and `sha256` automatically. The prefix is
+`fork-v`, not `v`, so a fork release can never trigger upstream's `release.yml`.
+
+The version stamp is yours to pick — `0.4.73-fork.1` reads as "upstream 0.4.73,
+first fork build". Homebrew compares versions to decide whether `brew upgrade`
+has anything to do, so bump the suffix on every release.
+
+To cut a release without tagging, use **Actions → Fork Release → Run workflow**
+and type the version.
+
+#### Gatekeeper, and why `--no-quarantine` may be needed
+
+Homebrew quarantines what it installs, and Gatekeeper refuses to open a
+quarantined app that isn't signed with a Developer ID and notarized. With no
+signing secrets configured the release is ad-hoc signed, so installing it takes:
+
+```bash
+brew install --cask --no-quarantine johnfoland/tap/claudebar
+```
+
+To drop that flag, add four secrets to this repo — the same names upstream's
+`release.yml` uses, so setting them up serves both workflows:
+
+| Secret | What it is |
+|--------|-----------|
+| `APPLE_CERTIFICATE_P12` | Developer ID Application cert + key, base64 of a `.p12` |
+| `APPLE_CERTIFICATE_PASSWORD` | password for that `.p12` |
+| `APP_STORE_CONNECT_API_KEY_P8` | contents of the App Store Connect `.p8` key |
+| `APP_STORE_CONNECT_KEY_ID` / `APP_STORE_CONNECT_ISSUER_ID` | that key's identifiers |
+
+`fork-release.yml` detects them and switches to Developer ID signing, hardened
+runtime, notarization and stapling with no edits. It requires an Apple Developer
+Program membership ($99/yr); without one, ad-hoc plus `--no-quarantine` is a
+perfectly workable fork distribution.
+
+#### Handing a local build over to Homebrew
+
+If `/Applications/ClaudeBar.app` is already there from `dev-build.sh --install`,
+a plain install refuses to overwrite it. `--adopt` takes ownership of what is
+already on disk instead:
+
+```bash
+brew install --cask --adopt johnfoland/tap/claudebar
+```
+
+Adopt is not unconditional: Homebrew compares `CFBundleShortVersionString` and
+`CFBundleVersion` between the downloaded app and the installed one, and fails
+with *"It seems the existing App is different from the one being installed"* if
+they differ. A `dev-build.sh --install` bundle is stamped `-fork.<sha>`, which
+will not match a release's `0.4.73-fork.1`, so adopt normally refuses. Either
+remove the local build and install cleanly:
+
+```bash
+rm -rf /Applications/ClaudeBar.app        # your own build; no sudo needed
+brew install --cask johnfoland/tap/claudebar
+```
+
+or stamp the local build to match, from the same commit the release was tagged
+at (`CFBundleVersion` is the commit count, so it has to agree too):
+
+```bash
+CLAUDEBAR_VERSION=0.4.73-fork.1 ./scripts/dev-build.sh --install
+brew install --cask --adopt johnfoland/tap/claudebar
+```
+
+When adopt does succeed it keeps the bundle already on disk rather than
+replacing it, so a locally-built app never picks up a quarantine flag.
+
+Building a release locally works the same way:
+
+```bash
+./scripts/fork-release.sh 0.4.73-fork.1 --universal
+# .build/ClaudeBar-0.4.73-fork.1.zip
 #     sha256: 9f2c...
 ```
 
-`--universal` builds arm64 + x86_64, which only matters if you'd install on an
-Intel Mac as well.
-
-What's still missing for a working tap is a stable download URL, which means
-GitHub Releases on this fork: a workflow that tags, archives, and uploads the
-zip, and a `homebrew-tap` repo whose cask points at the release asset with
-`version` and `sha256`. That's a self-contained piece of work — none of it
-changes anything above.
+`--universal` builds arm64 + x86_64; releases always use it so the cask covers
+Intel Macs too. `dev-build.sh --zip` remains the quicker path when you just want
+a bundle and don't care about release metadata.
 
 ### Inherited CI
 
