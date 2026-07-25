@@ -21,7 +21,7 @@ name: Fork Release
 # release from ever firing upstream's release.yml, which triggers on `v*`.
 #
 # Signing is secrets-gated. With no secrets set this produces an ad-hoc signed
-# release, which the cask's postflight makes installable by clearing quarantine;
+# release, which the cask's preflight makes installable by clearing quarantine;
 # add the four Apple secrets and the same workflow produces a notarized one that
 # needs no such help. Nothing here needs changing when you make that switch.
 
@@ -157,7 +157,7 @@ jobs:
           SHA256: ${{ steps.package.outputs.sha256 }}
           NOTARIZED: ${{ steps.package.outputs.notarized }}
         run: |
-          # The install command is the same either way: the cask's postflight
+          # The install command is the same either way: the cask's preflight
           # clears the quarantine attribute, so an ad-hoc build needs no flags.
           # Only the note about what the signature actually is differs.
           INSTALL_CMD='brew install --cask johnfoland/tap/claudebar'
@@ -165,7 +165,7 @@ jobs:
           if [ "$NOTARIZED" = "true" ]; then
             INSTALL_NOTE=$'Signed with a Developer ID and notarized by Apple.'
           else
-            INSTALL_NOTE=$'This build is **ad-hoc signed**, not notarized. The cask clears the quarantine attribute on install so Gatekeeper does not block it; if you would rather that were explicit, install with `HOMEBREW_CASK_OPTS=--no-quarantine` and drop the postflight block from the cask.'
+            INSTALL_NOTE=$'This build is **ad-hoc signed**, not notarized. The cask clears the quarantine attribute while the app is still staged, before it reaches `/Applications`, so Gatekeeper does not offer to move it to the Bin on first launch; if you would rather that were explicit, install with `HOMEBREW_CASK_OPTS=--no-quarantine` and drop the preflight block from the cask.'
           fi
 
           cat > "$RUNNER_TEMP/notes.md" <<EOF

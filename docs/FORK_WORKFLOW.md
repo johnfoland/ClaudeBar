@@ -496,23 +496,46 @@ GitHub, which is how its behaviour is tested.
 
 #### Gatekeeper and quarantine
 
-Homebrew quarantines what it installs, and Gatekeeper refuses to open a
-quarantined app that isn't signed with a Developer ID and notarized. With no
-signing secrets configured the release is ad-hoc signed, so it would be blocked.
+Homebrew quarantines what it installs, and Gatekeeper doesn't merely refuse to
+open a quarantined app that isn't Developer ID signed and notarized — it answers
+the first launch with *"ClaudeBar is damaged and can't be opened. You should move
+it to the Bin."*, and **"Move to Bin" is the default button**. With no signing
+secrets configured the release is ad-hoc signed, so a stray Return key at that
+dialog puts the app you just installed straight into the Trash.
 
-The cask handles this itself, in a `postflight` block that clears the attribute
-after install — so the install command stays plain:
+The cask handles this itself, so the install command stays plain:
 
 ```bash
 brew install --cask johnfoland/tap/claudebar
 ```
 
-Two things worth knowing about that block. It uses `command.run` with
+**The clearing has to happen in `preflight`, not `postflight`.** Homebrew
+applies quarantine to the *staged* copy in the Caskroom — `Quarantine.propagate`,
+at the end of `Cask::Installer#stage` — and artifacts run in a fixed order with
+`PreflightBlock` first, so preflight sees the bundle after it is quarantined but
+before the `app` stanza moves it into `/Applications`. Clearing it there needs
+nothing but write access to Homebrew's own cache.
+
+Clearing it in postflight, which is what this cask did until the app started
+turning up in the Trash, targets the bundle after it has landed in
+`/Applications`. macOS 14+ gates modifying an installed app bundle behind the
+App Management (TCC) permission, which the calling terminal usually hasn't been
+granted — Homebrew documents exactly this in `Cask::Staged#set_ownership`. The
+`xattr` call failed with `Operation not permitted`, `must_succeed: false`
+swallowed it, and the install reported success while leaving behind an app whose
+first run offered to throw it away.
+
+A `postflight` block remains, but only to *verify*: it checks the attribute on
+`/Applications/ClaudeBar.app`, retries once, and fails the install with
+instructions rather than hand over a bundle in that state.
+
+Two smaller things worth knowing. Both blocks use `command.run` with
 `must_succeed: false` rather than `system_command`, because the latter routes
-through `SystemCommand.run!`, which raises on a non-zero exit; `xattr -d` can
-exit non-zero when the attribute isn't present, which is exactly the case once
-releases are notarized. And it makes the Gatekeeper bypass implicit — a
-reasonable trade for your own build of your own fork, but it is a real trade.
+through `SystemCommand.run!`, which raises on a non-zero exit; `xattr -dr` exits
+non-zero for any file lacking the attribute — symlinks, which
+`Quarantine.propagate` skips, and every file at all once releases are notarized.
+And the whole arrangement makes the Gatekeeper bypass implicit — a reasonable
+trade for your own build of your own fork, but it is a real trade.
 
 The per-install alternative, if you'd rather keep it explicit, is an environment
 variable rather than a flag:

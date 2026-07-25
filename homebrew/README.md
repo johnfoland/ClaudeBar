@@ -32,16 +32,22 @@ brew install --cask johnfoland/tap/claudebar
 ### If the app won't open
 
 It should just open. Fork releases are ad-hoc signed rather than notarized, and
-Homebrew quarantines what it installs, so Gatekeeper would normally block them —
-the cask's `postflight` clears the quarantine attribute on install to avoid
-that. No flags, no environment variables.
+Homebrew quarantines what it installs, so macOS would otherwise greet the first
+launch with "ClaudeBar is damaged and can't be opened" — a dialog whose default
+button moves the app to the Bin. The cask clears the quarantine attribute while
+the app is still staged in the Caskroom, before it is moved to `/Applications`,
+so this never comes up. No flags, no environment variables.
 
-If macOS still says the app "is damaged" or "cannot be opened", clear it by
-hand:
+If macOS says that anyway, the install would have told you so and stopped. Clear
+the attribute by hand and reinstall:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/ClaudeBar.app
 ```
+
+If that itself fails with `Operation not permitted`, grant your terminal App
+Management permission in System Settings → Privacy & Security → App Management,
+then `brew reinstall --cask johnfoland/tap/claudebar`.
 
 ### Updating
 
