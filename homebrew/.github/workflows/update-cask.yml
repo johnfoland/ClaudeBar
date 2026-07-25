@@ -1,0 +1,87 @@
+name: Update ClaudeBar cask
+
+# Keeps Casks/claudebar.rb pointed at the newest johnfoland/ClaudeBar release.
+#
+# This deliberately runs *here* rather than being pushed from the ClaudeBar
+# repo: a workflow in that repo would need a personal access token to write to
+# this one, whereas polling from this side works with the built-in GITHUB_TOKEN
+# and no secrets at all. ClaudeBar's fork-release.yml can still send a
+# repository_dispatch to skip the wait, but it is purely an optimisation.
+
+on:
+  schedule:
+    # Hourly, off the hour — scheduled runs cluster (and get throttled) at :00.
+    - cron: '17 * * * *'
+  repository_dispatch:
+    types: [claudebar-release]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-cask
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Update cask if a newer release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          CASK=Casks/claudebar.rb
+          REPO=johnfoland/ClaudeBar
+
+          TAG="$(gh release list --repo "$REPO" --limit 20 --json tagName,isDraft,isPrerelease \
+            --jq '[.[] | select(.isDraft == false and .isPrerelease == false)
+                       | select(.tagName | startswith("fork-v"))][0].tagName // ""')"
+
+          if [ -z "$TAG" ]; then
+            echo "::notice::No fork-v* release published yet — nothing to do."
+            exit 0
+          fi
+
+          VERSION="${TAG#fork-v}"
+          CURRENT="$(sed -n 's/^  version "\(.*\)"$/\1/p' "$CASK")"
+
+          if [ "$VERSION" = "$CURRENT" ]; then
+            echo "Cask is already on $VERSION."
+            exit 0
+          fi
+
+          ASSET="ClaudeBar-$VERSION.zip"
+          URL="https://github.com/$REPO/releases/download/$TAG/$ASSET"
+
+          echo "Updating $CURRENT -> $VERSION"
+
+          # Hash the asset actually served from the release URL, rather than
+          # trusting a digest published alongside it.
+          if ! curl --fail --silent --show-error --location -o "$RUNNER_TEMP/$ASSET" "$URL"; then
+            echo "::error::Release $TAG exists but $ASSET could not be downloaded from it."
+            exit 1
+          fi
+          SHA256="$(sha256sum "$RUNNER_TEMP/$ASSET" | cut -d' ' -f1)"
+
+          # Anchored to the two-space indent these keys have inside the cask
+          # block, so neither pattern can match anything else in the file.
+          sed -i "s|^  version \".*\"$|  version \"$VERSION\"|" "$CASK"
+          sed -i "s|^  sha256 \".*\"$|  sha256 \"$SHA256\"|" "$CASK"
+
+          # Re-read rather than assuming sed matched.
+          test "$(sed -n 's/^  version "\(.*\)"$/\1/p' "$CASK")" = "$VERSION" \
+            || { echo "::error::version rewrite did not take effect."; exit 1; }
+          test "$(sed -n 's/^  sha256 "\(.*\)"$/\1/p' "$CASK")" = "$SHA256" \
+            || { echo "::error::sha256 rewrite did not take effect."; exit 1; }
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$CASK"
+          git commit -m "claudebar $VERSION"
+          git push
