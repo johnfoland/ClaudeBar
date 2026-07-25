@@ -46,5 +46,9 @@ jobs:
         with:
           name: ClaudeBar-${{ github.sha }}
           path: .build/ClaudeBar-*.zip
+          # .build is a dot-directory, and upload-artifact treats every path
+          # component starting with "." as hidden and silently skips it. The
+          # glob above matches only the packaged app, so this stays narrow.
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
