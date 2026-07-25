@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Runs after `git merge` / `git pull` — including the merge that
+# scripts/sync-upstream.sh does when it brings upstream into your work branch.
+set -euo pipefail
+exec "$(git rev-parse --show-toplevel)/scripts/hooks/tuist-drift-check.sh" ORIG_HEAD HEAD

@@ -358,3 +358,71 @@ Common error patterns logged:
 - **Sparkle**: Auto-update framework for macOS
 - **Mockable**: Protocol mocking for tests via Swift macros
 - **Tuist**: Xcode project generation for SwiftUI previews (`ENABLE_DEBUG_DYLIB`)
+
+## Fork Maintenance
+
+> **Full documentation:** [docs/FORK_WORKFLOW.md](docs/FORK_WORKFLOW.md)
+
+This repository is a fork of [tddworks/ClaudeBar](https://github.com/tddworks/ClaudeBar)
+that tracks upstream while carrying local customizations.
+
+### Branch model — read before committing
+
+| Branch | Role | Rule |
+|--------|------|------|
+| `main` | Byte-for-byte mirror of `upstream/main` | **Never commit here.** It only fast-forwards, so it can never conflict. |
+| `mine` | Fork customizations (default branch) | All work goes here. Upstream arrives via merge. |
+
+`git diff main..mine` is the fork's complete patch set. Keeping it small is
+what keeps syncs painless.
+
+### Rules for changes in this fork
+
+1. **Never commit to `main`** — it breaks the fast-forward and the sync tooling
+   will refuse to run.
+2. **Prefer adding files to editing them.** Use the extension points: a new
+   theme is a new file in `Sources/App/Theme/Themes/` plus 2 lines; a new
+   provider is new files plus 1 line in `ClaudeBarApp.init()`. Every upstream
+   line you touch is a line that can conflict later.
+3. **Avoid high-churn upstream files.** `CHANGELOG.md` (never edit it in a
+   fork), `SettingsView.swift`, `MenuContentView.swift`, `ClaudeBarApp.swift`,
+   `Sources/App/Info.plist` (rewritten every release).
+4. **Never reformat, reorder, or rename upstream code.** A whitespace pass
+   conflicts with every future upstream edit to that file.
+5. **Prefix fork-only commits** with `fork:` so `git log --oneline main..mine`
+   reads as an inventory of the customizations.
+6. **Append, don't insert** — adding at the end of an array or enum conflicts
+   far less often than adding in the middle.
+
+### Commands
+
+```bash
+./scripts/install-hooks.sh        # once per clone
+./scripts/sync-upstream.sh        # mirror main, merge into mine (usually automatic)
+./scripts/dev-build.sh --open     # generate project + open Xcode
+./scripts/dev-build.sh --test     # generate + run tests
+./scripts/dev-build.sh --install  # Release build -> /Applications
+```
+
+Prefer `./scripts/dev-build.sh` over raw `tuist`/`xcodebuild` — it runs
+`scripts/fix-swiftterm-metal.sh`, without which the build fails on SwiftTerm's
+duplicate `Shaders.metal`.
+
+### Automation
+
+- `.github/workflows/sync-upstream.yml` — nightly: fast-forwards `main`, merges
+  it into `mine`, builds and tests, and pushes only if green. Conflicts or
+  failures open a PR instead of touching `mine`.
+- `.github/workflows/fork-ci.yml` — build + test on push/PR to `mine`
+  (upstream's workflows only trigger on `main`/`develop`).
+- `scripts/hooks/` — warns after a merge or checkout when `Project.swift` or
+  `Tuist/Package.swift` changed and the generated Xcode project is stale.
+
+### Local builds and Sparkle
+
+`dev-build.sh --install` patches the *built bundle* — stamping the version as
+`<upstream-version>-fork.<sha>` and disabling Sparkle's automatic update check
+— because the shipped feed points at upstream's appcast and would otherwise
+replace a local build with a stock release. Do not move that patching into
+`Sources/App/Info.plist`; keeping it out of the repo keeps the fork's diff
+clean.

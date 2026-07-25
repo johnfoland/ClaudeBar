@@ -14,23 +14,26 @@
 #   ./scripts/dev-build.sh --clean        # nuke generated project + derived data first
 #
 # Flags combine, e.g.: ./scripts/dev-build.sh --clean --test
+# Add --skip-generate to reuse an existing workspace (saves ~30s on repeat runs).
 
 set -euo pipefail
 
 ACTION="build"
 CONFIG="Debug"
 CLEAN="no"
+GENERATE="yes"
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --open)    ACTION="open"; shift ;;
-        --test)    ACTION="test"; shift ;;
-        --install) ACTION="install"; CONFIG="Release"; shift ;;
-        --release) CONFIG="Release"; shift ;;
-        --debug)   CONFIG="Debug"; shift ;;
-        --clean)   CLEAN="yes"; shift ;;
-        -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        *)         echo "Unknown option: $1" >&2; exit 2 ;;
+        --open)          ACTION="open"; shift ;;
+        --test)          ACTION="test"; shift ;;
+        --install)       ACTION="install"; CONFIG="Release"; shift ;;
+        --release)       CONFIG="Release"; shift ;;
+        --debug)         CONFIG="Debug"; shift ;;
+        --clean)         CLEAN="yes"; shift ;;
+        --skip-generate) GENERATE="no"; shift ;;
+        -h|--help)       sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *)               echo "Unknown option: $1" >&2; exit 2 ;;
     esac
 done
 
@@ -55,15 +58,19 @@ if [ "$CLEAN" = "yes" ]; then
     tuist clean >/dev/null 2>&1 || true
 fi
 
-info "Resolving dependencies (tuist install)"
-tuist install
+if [ "$GENERATE" = "yes" ] || [ ! -d "$WORKSPACE" ]; then
+    info "Resolving dependencies (tuist install)"
+    tuist install
 
-info "Generating Xcode project (tuist generate)"
-tuist generate --no-open
+    info "Generating Xcode project (tuist generate)"
+    tuist generate --no-open
 
-# Workaround for tuist/tuist#9111 — CI runs this too; without it the build
-# fails with "Unexpected duplicate tasks" on SwiftTerm's Shaders.metal.
-./scripts/fix-swiftterm-metal.sh
+    # Workaround for tuist/tuist#9111 — CI runs this too; without it the build
+    # fails with "Unexpected duplicate tasks" on SwiftTerm's Shaders.metal.
+    ./scripts/fix-swiftterm-metal.sh
+else
+    info "Reusing existing $WORKSPACE (--skip-generate)"
+fi
 
 if [ "$ACTION" = "open" ]; then
     info "Opening $WORKSPACE"

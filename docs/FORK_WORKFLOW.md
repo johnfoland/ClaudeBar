@@ -8,6 +8,26 @@ Upstream is active — roughly a release a week, dozens of merged PRs a month �
 so "sync occasionally and hope" turns into a painful merge fast. The setup
 below keeps each sync boring.
 
+## What runs by itself
+
+Most of this is automated. In the normal case upstream lands on `mine`
+overnight and you never touch it.
+
+| When | What happens | Where |
+|------|--------------|-------|
+| Daily, 06:00 UTC | `main` fast-forwards to upstream | `sync-upstream.yml` (job 1) |
+| ...then | `main` merges into `mine`, gets built and tested, and is pushed **only if green** | `sync-upstream.yml` (job 2) |
+| ...if it conflicts or fails | A pull request opens instead; `mine` is left alone | `sync-upstream.yml` |
+| Push / PR to `mine` | Build + test on macOS | `fork-ci.yml` |
+| After a merge or checkout | Warns you when Tuist inputs changed and your Xcode project is stale | `scripts/hooks/` |
+
+What is deliberately *not* automated: resolving conflicts, and pushing a merge
+that fails to build. Both mean an upstream change collided with something of
+yours, and both want eyes on them.
+
+You get a GitHub notification when the sync opens a PR. If you'd rather be
+notified on every run, watch the repo's Actions.
+
 ---
 
 ## 1. The branch model
@@ -42,6 +62,9 @@ git push -u origin mine
 # Remember conflict resolutions so repeated syncs stop re-asking
 git config rerere.enabled true
 git config rerere.autoupdate true
+
+# Install the repo's git hooks (once per clone)
+./scripts/install-hooks.sh
 ```
 
 Then **set `mine` as the default branch** in GitHub → Settings → General →
@@ -86,23 +109,51 @@ git checkout mine && git merge main
 
 ### Automatically
 
-`.github/workflows/sync-upstream.yml` fast-forwards `main` daily at 06:00 UTC
-(and on demand from the Actions tab), so the mirror is current before you sit
-down. It never touches `mine` — merging upstream into your work belongs on a
-machine where you can build and test the result.
+`.github/workflows/sync-upstream.yml` does the whole thing nightly, in two
+jobs:
 
-The workflow file lives on `mine`, and the schedule only runs if `mine` is your
-default branch (see §1). Until then, trigger it manually from the Actions tab.
+**Job 1 — `mirror`** (Linux, ~20s) fast-forwards `main` to upstream. It is
+fast-forward-only: if `main` has somehow acquired commits of its own it fails
+loudly rather than rewriting anything.
+
+**Job 2 — `integrate`** (macOS, ~15 min) runs only when job 1 actually moved.
+It merges `main` into `mine`, then:
+
+| Outcome | Result |
+|---------|--------|
+| Merges clean, builds, tests pass | Pushed straight to `mine`. Nothing for you to do. |
+| Merge conflicts | Nothing pushed. Opens a PR `main` → `mine` listing the conflicting files. |
+| Merges clean but build/tests fail | Nothing pushed. Opens a PR explaining that upstream collided with your changes semantically. |
+
+That third case is why the macOS job exists at all. A merge that produces no
+conflict markers can still be broken — upstream renames a protocol method your
+custom provider implements, git merges both sides happily, and the result
+doesn't compile. Only a build catches that.
+
+The PR is reused rather than duplicated: if the sync fails two nights running,
+the same PR is updated.
+
+Run it on demand from **Actions → Sync Fork with Upstream → Run workflow**,
+which also offers two options:
+
+- **force_integrate** — run the merge/test job even when upstream had nothing
+  new (useful right after you push your own changes to `mine`).
+- **skip_tests** — push a clean merge without building. Faster, less safe.
+
+The workflow file lives on `mine`, and the nightly schedule runs only because
+`mine` is the default branch (see §1) — GitHub schedules workflows from the
+default branch only.
 
 GitHub also offers a **Sync fork** button on the repo page, and `gh repo sync
 johnfoland/ClaudeBar --branch main` from the CLI. Both do the same
-fast-forward; the workflow just removes the need to remember.
+fast-forward as job 1, without the merge into `mine`.
 
 ### How often
 
-Sync **before** you start a change, not after. Merging a week of upstream into
-a clean tree is trivial; merging it into three days of your own half-finished
-work is not. Weekly is a good rhythm for this repo.
+The nightly job mostly answers this for you. When you do sync by hand, sync
+**before** you start a change, not after: merging a week of upstream into a
+clean tree is trivial, merging it into three days of your own half-finished
+work is not.
 
 ---
 
@@ -223,13 +274,49 @@ with "Unexpected duplicate tasks" on SwiftTerm's `Shaders.metal`.
 ### Day-to-day loop
 
 ```bash
-./scripts/sync-upstream.sh        # weekly, or before starting work
+git pull                          # the nightly sync already merged upstream
 ./scripts/dev-build.sh --open     # then ⌘R / ⌘U inside Xcode
 ```
 
 Xcode is the better inner loop once the project is generated; the script is for
 after a sync, after a `Project.swift` change, or when you want a clean
 verification from the terminal.
+
+### The stale-project trap (and the hook that catches it)
+
+The single most confusing failure in a Tuist project: you pull, the build
+breaks, and nothing you changed is at fault. What happened is that upstream
+edited `Project.swift` or `Tuist/Package.swift` — added a target, bumped a
+dependency — and your generated `.xcworkspace` still describes the old shape.
+
+`./scripts/install-hooks.sh` (once per clone) installs `post-merge` and
+`post-checkout` hooks that notice exactly this and tell you:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ Tuist inputs changed — your Xcode project is stale.          │
+└──────────────────────────────────────────────────────────────┘
+```
+
+To skip the message and just have it regenerate, put this in your shell
+profile:
+
+```bash
+export CLAUDEBAR_AUTO_GENERATE=1
+```
+
+The hooks live in `scripts/hooks/` and are wired up with `core.hooksPath`, so
+they're version-controlled rather than hidden in `.git/hooks`. That does mean
+any hooks you already had in `.git/hooks` stop running — `install-hooks.sh`
+warns you if it finds some, and `--remove` puts things back.
+
+### Verification on GitHub
+
+`fork-ci.yml` runs the test suite and a Release build on every push and PR to
+`mine`. Upstream's `build.yml`/`tests.yml` only trigger on `main` and
+`develop`, so without it your branch would have no CI. It's deliberately thin —
+it just calls `scripts/dev-build.sh`, so CI and your Mac build the app the same
+way, and upstream changing its workflow files can't conflict with yours.
 
 ### Installing your own build
 
@@ -263,7 +350,10 @@ signing identity.
 ## 5. Quick reference
 
 ```bash
-# Sync
+# Once per clone
+./scripts/install-hooks.sh                 # stale-project warnings
+
+# Sync (the nightly workflow usually does this for you)
 ./scripts/sync-upstream.sh                 # mirror main, merge into mine
 ./scripts/sync-upstream.sh --mirror-only   # update main only
 
@@ -282,3 +372,23 @@ git merge --abort                          # back out an in-progress merge
 git checkout main -- <file>                # take upstream's version of a file
 git reset --hard upstream/main             # (on main only) restore the mirror
 ```
+
+## 6. Files this fork owns
+
+Everything the fork adds is a new file, so the diff against upstream stays
+additive and nothing here can conflict on a sync:
+
+```
+docs/FORK_WORKFLOW.md               this document
+scripts/sync-upstream.sh            manual sync
+scripts/dev-build.sh                generate / build / test / install
+scripts/install-hooks.sh            hook installer
+scripts/hooks/                      post-merge, post-checkout, drift check
+.github/workflows/sync-upstream.yml nightly mirror + integrate
+.github/workflows/fork-ci.yml       CI for the mine branch
+```
+
+The one exception is a short **Fork Maintenance** section appended to
+`CLAUDE.md`, so Claude Code sessions in this repo know the branch model. That
+file changes upstream about once every 75 commits, and the section is at the
+end, so the conflict risk is small — but it is the one file to watch.
