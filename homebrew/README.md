@@ -31,21 +31,13 @@ brew install --cask johnfoland/tap/claudebar
 
 ### If the app won't open
 
-Unless the release was signed with a Developer ID and notarized, macOS
-Gatekeeper will block it, because Homebrew quarantines what it installs.
-Install it without the quarantine flag:
+It should just open. Fork releases are ad-hoc signed rather than notarized, and
+Homebrew quarantines what it installs, so Gatekeeper would normally block them —
+the cask's `postflight` clears the quarantine attribute on install to avoid
+that. No flags, no environment variables.
 
-```bash
-HOMEBREW_CASK_OPTS=--no-quarantine brew install --cask johnfoland/tap/claudebar
-```
-
-Note this is an environment variable, not a command-line switch. Current
-Homebrew has no `--no-quarantine` flag on `brew install` — it reads the option
-out of `HOMEBREW_CASK_OPTS` instead, and errors with `invalid option` if you
-pass it directly.
-
-If you already installed it and macOS says the app "is damaged" or "cannot be
-opened", clear the flag in place:
+If macOS still says the app "is damaged" or "cannot be opened", clear it by
+hand:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/ClaudeBar.app

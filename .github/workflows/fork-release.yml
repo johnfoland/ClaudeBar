@@ -13,9 +13,9 @@ name: Fork Release
 # accidentally fire upstream's release.yml (which triggers on `v*`).
 #
 # Signing is secrets-gated. With no secrets set this produces an ad-hoc signed
-# release, which installs only with HOMEBREW_CASK_OPTS=--no-quarantine; add the
-# four Apple secrets and the same workflow produces a notarized one that
-# installs cleanly. Nothing here needs changing when you make that switch.
+# release, which the cask's postflight makes installable by clearing quarantine;
+# add the four Apple secrets and the same workflow produces a notarized one that
+# needs no such help. Nothing here needs changing when you make that switch.
 
 on:
   push:
@@ -127,12 +127,15 @@ jobs:
           SHA256: ${{ steps.package.outputs.sha256 }}
           NOTARIZED: ${{ steps.package.outputs.notarized }}
         run: |
+          # The install command is the same either way: the cask's postflight
+          # clears the quarantine attribute, so an ad-hoc build needs no flags.
+          # Only the note about what the signature actually is differs.
+          INSTALL_CMD='brew install --cask johnfoland/tap/claudebar'
+
           if [ "$NOTARIZED" = "true" ]; then
-            INSTALL_NOTE=$'Signed with a Developer ID and notarized by Apple, so it installs with no extra flags.'
-            INSTALL_CMD='brew install --cask johnfoland/tap/claudebar'
+            INSTALL_NOTE=$'Signed with a Developer ID and notarized by Apple.'
           else
-            INSTALL_NOTE=$'This build is **ad-hoc signed**, not notarized, so Gatekeeper will refuse to open it unless Homebrew skips the quarantine flag.'
-            INSTALL_CMD='HOMEBREW_CASK_OPTS=--no-quarantine brew install --cask johnfoland/tap/claudebar'
+            INSTALL_NOTE=$'This build is **ad-hoc signed**, not notarized. The cask clears the quarantine attribute on install so Gatekeeper does not block it; if you would rather that were explicit, install with `HOMEBREW_CASK_OPTS=--no-quarantine` and drop the postflight block from the cask.'
           fi
 
           cat > "$RUNNER_TEMP/notes.md" <<EOF

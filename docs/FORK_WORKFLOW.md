@@ -444,22 +444,38 @@ has anything to do, so bump the suffix on every release.
 To cut a release without tagging, use **Actions → Fork Release → Run workflow**
 and type the version.
 
-#### Gatekeeper, and skipping quarantine
+#### Gatekeeper and quarantine
 
 Homebrew quarantines what it installs, and Gatekeeper refuses to open a
 quarantined app that isn't signed with a Developer ID and notarized. With no
-signing secrets configured the release is ad-hoc signed, so installing it takes:
+signing secrets configured the release is ad-hoc signed, so it would be blocked.
+
+The cask handles this itself, in a `postflight` block that clears the attribute
+after install — so the install command stays plain:
+
+```bash
+brew install --cask johnfoland/tap/claudebar
+```
+
+Two things worth knowing about that block. It uses `command.run` with
+`must_succeed: false` rather than `system_command`, because the latter routes
+through `SystemCommand.run!`, which raises on a non-zero exit; `xattr -d` can
+exit non-zero when the attribute isn't present, which is exactly the case once
+releases are notarized. And it makes the Gatekeeper bypass implicit — a
+reasonable trade for your own build of your own fork, but it is a real trade.
+
+The per-install alternative, if you'd rather keep it explicit, is an environment
+variable rather than a flag:
 
 ```bash
 HOMEBREW_CASK_OPTS=--no-quarantine brew install --cask johnfoland/tap/claudebar
 ```
 
-This is an environment variable, **not** a `brew install` switch. Current
-Homebrew rejects `--no-quarantine` on the command line with `Error: invalid
-option`; the option is read out of `HOMEBREW_CASK_OPTS` by
+Current Homebrew rejects `--no-quarantine` on the command line with `Error:
+invalid option` — it reads the option out of `HOMEBREW_CASK_OPTS` via
 `Homebrew::EnvConfig.cask_opts_quarantine?`, which scans the value in reverse
-and returns false on the first `--no-quarantine` it sees (defaulting to
-quarantine when neither appears).
+and returns false on the first `--no-quarantine` it sees, defaulting to
+quarantine when neither token appears.
 
 Clearing it after the fact works equally well:
 
