@@ -446,24 +446,96 @@ picking it up:
 brew upgrade --cask johnfoland/tap/claudebar
 ```
 
-**Skipping a release.** Put `[skip release]` anywhere in the commit message and
-the workflow won't run — for docs-only commits that shouldn't mint a build.
+**Skipping a release.** Two ways. A `paths-ignore` filter on both fork workflows
+skips the build automatically when a push touches only `homebrew/`, `docs/`,
+`README.md` or `CLAUDE.md` — none of which can change the built app. For
+anything else, put `[skip release]` anywhere in the commit message.
 
 **Forcing one.** **Actions → Fork Release → Run workflow**. Leave the version
 blank to compute the next one as usual, or type one to override it. Publishing
 over a version that already exists fails loudly rather than doing nothing.
 
-**Making it instant.** The tap polls hourly. Add a `HOMEBREW_TAP_TOKEN` secret
-to this repo — a PAT with `contents: write` on `homebrew-tap` — and the release
-notifies the tap directly, so the cask updates in seconds. Everything works
-without it; the only difference is the wait.
-
 **Editing the cask.** `homebrew/Casks/claudebar.rb` in *this* repo is the source
 of truth. The tap's hourly job fetches it from `mine`, stamps the newest
 release's version and sha256 into it, and commits if the result differs from
-what it already has — so a new `zap` path or a changed `postflight` propagates
+what it already has — so a new `zap` path or a changed `preflight` propagates
 on its own, with no release needed and nothing to re-run.
 `scripts/bootstrap-tap.sh` is only for creating the tap repo in the first place.
+
+#### Making it instant: HOMEBREW_TAP_TOKEN
+
+The tap polls hourly, so a release takes up to an hour to reach `brew`. Both
+ends of the faster path are already wired — `fork-release.yml` ends with a
+"Nudge the Homebrew tap" step that POSTs a `repository_dispatch`, and the tap's
+`update-cask.yml` listens for it:
+
+```yaml
+  repository_dispatch:
+    types: [claudebar-release]
+```
+
+The only missing piece is a token, because `GITHUB_TOKEN` is scoped to the
+repository it runs in and cannot dispatch to another one.
+
+1. **Create a fine-grained PAT.** Resource owner `johnfoland`, repository access
+   **Only select repositories → `johnfoland/homebrew-tap`**, and under
+   *Repository permissions* set **Contents: Read and write**. That single
+   permission is what the dispatches endpoint requires — nothing else needs
+   enabling. (A classic PAT works too; `public_repo` is enough while the tap is
+   public. The fine-grained one is tighter and worth the extra minute.)
+2. **Set an expiry you'll actually notice.** When it lapses the nudge fails
+   soft — `|| echo "::warning::..."` — and the tap silently falls back to
+   hourly polling. Nothing breaks; it just stops being instant, quietly.
+3. **Add it to *this* repo, not the tap.** **Settings → Secrets and variables →
+   Actions → New repository secret**, named exactly `HOMEBREW_TAP_TOKEN`. This
+   is the easy one to get wrong: the secret is read by `fork-release.yml`, which
+   runs here, so it belongs here even though it grants access to the tap.
+4. **Verify.** Push anything to `mine` that mints a release and check the
+   release run's *Nudge the Homebrew tap* step. Without the token it logs
+   `No HOMEBREW_TAP_TOKEN set`; with it the step is silent and a
+   `repository_dispatch` run appears in the tap's Actions tab within seconds.
+
+Everything works without the token. The only difference is the wait.
+
+#### The tap's workflow cannot update itself
+
+`update-cask.yml` propagates the cask but not itself. GitHub refuses any
+`GITHUB_TOKEN` push that touches `.github/workflows/**`, so the copy running in
+the tap is whatever was last put there by hand or by `bootstrap-tap.sh` —
+**editing `homebrew/.github/workflows/update-cask.yml` here changes nothing
+until you copy it across**.
+
+This is not hypothetical. The tap once spent a day running a superseded copy
+that bailed out whenever the version was unchanged, and so never looked at the
+cask body at all:
+
+```bash
+if [ "$VERSION" = "$CURRENT" ]; then
+  echo "Cask is already on $VERSION."
+  exit 0
+fi
+```
+
+Two separate cask fixes sat in this repo unshipped while every hourly run in the
+tap reported success — correctly concluding, under its own stale logic, that
+there was nothing to do. The cask being served had no quarantine handling at
+all, so Gatekeeper offered to move the ad-hoc signed app to the Bin on first
+launch, and nothing anywhere looked broken.
+
+The workflow now fetches the canonical copy from `mine`, `cmp`s it against
+itself, and emits a `::warning::` annotation when they differ. It warns rather
+than failing, because a drifted workflow still does useful work and a hard
+failure would take cask updates down with it. It cannot self-heal, for the token
+reason above. So when you change that file:
+
+```bash
+cp homebrew/.github/workflows/update-cask.yml \
+   ../homebrew-tap/.github/workflows/update-cask.yml
+# then commit and push it in the tap repo
+```
+
+The drift warning is the safety net, not the mechanism — check the tap's run
+summary if a cask change ever seems not to land.
 
 #### How the version number is chosen
 
