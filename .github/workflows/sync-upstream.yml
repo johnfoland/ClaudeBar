@@ -1,0 +1,81 @@
+name: Sync Fork with Upstream
+
+# Keeps this fork's `main` a pristine mirror of tddworks/ClaudeBar@main.
+#
+# It only ever fast-forwards, so it can never produce a conflict or rewrite
+# history. Your customizations live on a separate branch (`mine` by default)
+# and are merged locally with ./scripts/sync-upstream.sh — that is where any
+# conflict resolution belongs, on a machine where you can build and test.
+#
+# This file lives on the work branch (`mine`), not on `main` — `main` has to
+# stay identical to upstream. GitHub only runs `schedule` triggers from the
+# repository's DEFAULT branch, so set `mine` as the default branch under
+# Settings → General for the daily run to fire. Until then it still works from
+# Actions → Sync Fork with Upstream → Run workflow.
+#
+# Note: pushes made with GITHUB_TOKEN do not trigger other workflows, so this
+# will not kick off the inherited build/test/release jobs on every sync.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'   # daily, 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  UPSTREAM_URL: https://github.com/tddworks/ClaudeBar.git
+  UPSTREAM_BRANCH: main
+  MIRROR_BRANCH: main
+
+jobs:
+  sync:
+    name: Fast-forward main from upstream
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout mirror branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.MIRROR_BRANCH }}
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream "$UPSTREAM_URL"
+          git fetch --prune upstream "$UPSTREAM_BRANCH"
+
+      - name: Fast-forward
+        id: ff
+        run: |
+          before=$(git rev-parse HEAD)
+          upstream=$(git rev-parse "upstream/$UPSTREAM_BRANCH")
+
+          if [ "$before" = "$upstream" ]; then
+            echo "Already up to date at ${before:0:7}"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! git merge-base --is-ancestor "$before" "$upstream"; then
+            echo "::error::$MIRROR_BRANCH has diverged from upstream and cannot fast-forward."
+            echo "::error::The mirror branch must stay an exact copy of upstream — move any"
+            echo "::error::commits of your own onto your work branch, then reset $MIRROR_BRANCH."
+            exit 1
+          fi
+
+          git merge --ff-only "upstream/$UPSTREAM_BRANCH"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Synced \`$MIRROR_BRANCH\` to upstream"
+            echo
+            echo "\`${before:0:7}\` → \`${upstream:0:7}\`"
+            echo
+            git log --oneline "$before..$upstream" | head -30 | sed 's/^/- /'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Push
+        if: steps.ff.outputs.changed == 'true'
+        run: git push origin "HEAD:$MIRROR_BRANCH"
