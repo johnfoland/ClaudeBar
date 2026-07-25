@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Runs after `git checkout` / `git switch`. Args: <prev-head> <new-head> <is-branch-checkout>
+# Only branch switches matter here; checking out a single file can't change Tuist inputs.
+set -euo pipefail
+[ "${3:-0}" = "1" ] || exit 0
+exec "$(git rev-parse --show-toplevel)/scripts/hooks/tuist-drift-check.sh" "$1" "$2"

@@ -1,0 +1,244 @@
+name: Sync Fork with Upstream
+
+# Keeps this fork current with tddworks/ClaudeBar, end to end:
+#
+#   1. mirror    — fast-forwards `main` to upstream/main. Fast-forward only, so
+#                  it can never conflict or rewrite history.
+#   2. integrate — merges `main` into `mine`, builds and tests the result, and
+#                  pushes only if it's green. Anything that isn't clean and
+#                  green becomes a pull request for you to look at instead.
+#
+# `main` must stay a byte-for-byte copy of upstream — never commit to it. All
+# fork-owned files (this workflow included) live on `mine`.
+#
+# GitHub only runs `schedule` triggers from the DEFAULT branch, which is why
+# `mine` is the default branch. It can always be run by hand from
+# Actions → Sync Fork with Upstream → Run workflow.
+#
+# Note: pushes made with GITHUB_TOKEN do not trigger other workflows, so the
+# push to `mine` below will not re-run fork-ci.yml — the tests already ran here.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'   # daily, 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      force_integrate:
+        description: 'Run the merge/test step even if upstream had nothing new'
+        type: boolean
+        default: false
+      skip_tests:
+        description: 'Push a clean merge without building (faster, less safe)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_URL: https://github.com/tddworks/ClaudeBar.git
+  UPSTREAM_BRANCH: main
+  MIRROR_BRANCH: main
+  WORK_BRANCH: mine
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Mirror: fast-forward `main` to upstream. Cheap, runs on Linux.
+  # ---------------------------------------------------------------------------
+  mirror:
+    name: Mirror main from upstream
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.ff.outputs.changed }}
+      before: ${{ steps.ff.outputs.before }}
+      after: ${{ steps.ff.outputs.after }}
+
+    steps:
+      - name: Checkout mirror branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.MIRROR_BRANCH }}
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream "$UPSTREAM_URL"
+          git fetch --prune upstream "$UPSTREAM_BRANCH"
+
+      - name: Fast-forward
+        id: ff
+        run: |
+          before=$(git rev-parse HEAD)
+          after=$(git rev-parse "upstream/$UPSTREAM_BRANCH")
+          echo "before=$before" >> "$GITHUB_OUTPUT"
+          echo "after=$after"   >> "$GITHUB_OUTPUT"
+
+          if [ "$before" = "$after" ]; then
+            echo "Already up to date at ${before:0:7}"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "\`$MIRROR_BRANCH\` already up to date at \`${before:0:7}\`." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if ! git merge-base --is-ancestor "$before" "$after"; then
+            echo "::error::$MIRROR_BRANCH has diverged from upstream and cannot fast-forward."
+            echo "::error::The mirror branch must stay an exact copy of upstream — move any"
+            echo "::error::commits of your own onto $WORK_BRANCH, then reset $MIRROR_BRANCH."
+            exit 1
+          fi
+
+          git merge --ff-only "upstream/$UPSTREAM_BRANCH"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Mirrored \`$MIRROR_BRANCH\`"
+            echo
+            echo "\`${before:0:7}\` → \`${after:0:7}\` ($(git rev-list --count "$before..$after") commits)"
+            echo
+            git log --oneline "$before..$after" | head -30 | sed 's/^/- /'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Push
+        if: steps.ff.outputs.changed == 'true'
+        run: git push origin "HEAD:$MIRROR_BRANCH"
+
+  # ---------------------------------------------------------------------------
+  # 2. Integrate: merge `main` into `mine`, verify, push if green.
+  # ---------------------------------------------------------------------------
+  integrate:
+    name: Merge upstream into work branch
+    needs: mirror
+    if: needs.mirror.outputs.changed == 'true' || inputs.force_integrate
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout work branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.WORK_BRANCH }}
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Attempt merge
+        id: merge
+        run: |
+          git fetch origin "$MIRROR_BRANCH:$MIRROR_BRANCH" 2>/dev/null \
+            || git fetch origin "$MIRROR_BRANCH"
+
+          if git merge-base --is-ancestor "$MIRROR_BRANCH" HEAD; then
+            echo "$WORK_BRANCH already contains everything from $MIRROR_BRANCH"
+            echo "result=uptodate" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git merge --no-edit "$MIRROR_BRANCH"; then
+            echo "result=clean" >> "$GITHUB_OUTPUT"
+          else
+            files=$(git diff --name-only --diff-filter=U | sed 's/^/- `/;s/$/`/')
+            git merge --abort
+            echo "result=conflict" >> "$GITHUB_OUTPUT"
+            {
+              echo "files<<EOF"
+              echo "$files"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+            echo "::warning::Merge conflicts — opening a pull request instead."
+          fi
+
+      - name: Install Tuist
+        if: steps.merge.outputs.result == 'clean' && !inputs.skip_tests
+        run: brew install --cask tuist
+
+      - name: Build and test the merged tree
+        id: verify
+        if: steps.merge.outputs.result == 'clean' && !inputs.skip_tests
+        continue-on-error: true
+        run: ./scripts/dev-build.sh --test
+
+      # Green (or tests deliberately skipped): land it on the work branch.
+      - name: Push merge to work branch
+        id: push
+        if: |
+          steps.merge.outputs.result == 'clean' &&
+          (inputs.skip_tests || steps.verify.outcome == 'success')
+        run: |
+          git push origin "HEAD:$WORK_BRANCH"
+          {
+            echo "### Merged upstream into \`$WORK_BRANCH\` ✅"
+            echo
+            echo "Verified by: ${{ inputs.skip_tests && 'nothing (tests skipped)' || 'build + test suite' }}"
+            echo
+            git log --oneline -1 | sed 's/^/- /'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Anything else — conflicts, or a merge that breaks the build — becomes a
+      # PR. Never pushed to `mine` unattended.
+      - name: Open a pull request for manual review
+        if: |
+          steps.merge.outputs.result == 'conflict' ||
+          (steps.merge.outputs.result == 'clean' && !inputs.skip_tests && steps.verify.outcome != 'success')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REASON: ${{ steps.merge.outputs.result == 'conflict' && 'conflict' || 'test-failure' }}
+          CONFLICT_FILES: ${{ steps.merge.outputs.files }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$REASON" = "conflict" ]; then
+            title="Sync upstream into $WORK_BRANCH (conflicts)"
+            body=$(cat <<EOF
+          Upstream moved and \`$MIRROR_BRANCH\` merges into \`$WORK_BRANCH\` with conflicts,
+          so nothing was pushed. Resolve locally:
+
+          \`\`\`bash
+          ./scripts/sync-upstream.sh
+          \`\`\`
+
+          ### Conflicting files
+
+          $CONFLICT_FILES
+
+          [Workflow run]($RUN_URL)
+          EOF
+            )
+          else
+            title="Sync upstream into $WORK_BRANCH (build/tests failed)"
+            body=$(cat <<EOF
+          Upstream merged into \`$WORK_BRANCH\` cleanly, but the merged tree failed to
+          build or test — so nothing was pushed. This usually means an upstream change
+          collided with one of your customizations semantically rather than textually.
+
+          \`\`\`bash
+          ./scripts/sync-upstream.sh --no-push
+          ./scripts/dev-build.sh --test
+          \`\`\`
+
+          [Failing workflow run]($RUN_URL)
+          EOF
+            )
+          fi
+
+          existing=$(gh pr list --base "$WORK_BRANCH" --head "$MIRROR_BRANCH" \
+                       --state open --json number --jq '.[0].number // empty')
+
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --title "$title" --body "$body"
+            echo "Updated existing PR #$existing"
+          else
+            gh pr create --base "$WORK_BRANCH" --head "$MIRROR_BRANCH" \
+                         --title "$title" --body "$body"
+          fi
+
+          {
+            echo "### Sync needs attention ⚠️"
+            echo
+            echo "Reason: \`$REASON\`. A pull request into \`$WORK_BRANCH\` is open."
+          } >> "$GITHUB_STEP_SUMMARY"

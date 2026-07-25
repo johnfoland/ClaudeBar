@@ -1,0 +1,38 @@
+name: Fork CI
+
+# Upstream's build.yml and tests.yml only trigger on `main` and `develop`, so
+# work on `mine` would otherwise get no CI at all. This is the fork's own
+# verification, kept deliberately thin: it just calls scripts/dev-build.sh, so
+# there is one definition of "how this app is built" shared by CI and your Mac.
+#
+# Editing upstream's workflow files to add `mine` would work too, but those are
+# upstream-owned files — a separate file keeps the fork's diff additive.
+
+on:
+  push:
+    branches: [mine]
+  pull_request:
+    branches: [mine]
+  workflow_dispatch:
+
+concurrency:
+  group: fork-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Build and test
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Tuist
+        run: brew install --cask tuist
+
+      - name: Test
+        run: ./scripts/dev-build.sh --test
+
+      - name: Release build
+        run: ./scripts/dev-build.sh --release --skip-generate
