@@ -448,6 +448,18 @@ install-action build and drops it, matching upstream's `release.yml`.
   and sha256 into it, and commits if anything changed — so cask edits propagate
   on their own. It lives on the tap side so it needs no cross-repo token.
   `bootstrap-tap.sh` is only for creating the tap repo in the first place.
+
+  **`update-cask.yml` propagates the cask but not itself.** GitHub refuses a
+  `GITHUB_TOKEN` push touching `.github/workflows/**`, so editing
+  `homebrew/.github/workflows/update-cask.yml` here changes nothing until it is
+  copied into the tap repo by hand. Editing the cask alone is safe and
+  automatic; editing the workflow is a two-repo change. The tap once ran a
+  superseded copy for a day — one that never read the cask body — shipping a
+  cask with no quarantine handling while every hourly run reported success. The
+  workflow now `cmp`s itself against the canonical copy and warns on mismatch,
+  which makes the drift visible but cannot fix it. See
+  [docs/FORK_WORKFLOW.md](docs/FORK_WORKFLOW.md) → "The tap's workflow cannot
+  update itself".
 - `scripts/hooks/` — warns after a merge or checkout when `Project.swift` or
   `Tuist/Package.swift` changed and the generated Xcode project is stale.
 
