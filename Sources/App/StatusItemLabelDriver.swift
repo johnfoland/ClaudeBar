@@ -129,6 +129,13 @@ final class StatusItemLabelDriver {
             burnRateWarningEnabled: settings.burnRateWarningEnabled,
             burnRateThreshold: settings.burnRateThreshold
         )
+        // fork: drop the quota-window prefixes and restyle the separators.
+        .map {
+            $0.forkStyled(
+                primaryQuotaKey: settings.menuBarPercentageQuotaKey,
+                secondaryQuotaKey: settings.menuBarSecondaryQuotaKey
+            )
+        }
 
         return LabelContent(
             label: freshLabel ?? lastKnownLabel(whenFreshIsMissing: freshLabel),
@@ -209,14 +216,14 @@ final class StatusItemLabelDriver {
             // full joined text, so no information is lost either way.
             if content.stacked, label.segments.count == 2 {
                 parts.append(StatusBarStackedImageRenderer.image(
-                    top: (label.segments[0].text, theme.statusColor(for: label.segments[0].status)),
-                    bottom: (label.segments[1].text, theme.statusColor(for: label.segments[1].status)),
+                    top: (label.segments[0].text, theme.forkMenuBarTextColor),
+                    bottom: (label.segments[1].text, theme.forkMenuBarTextColor),
                     size: content.stackedSize
                 ))
             } else {
                 parts.append(StatusBarPercentageImageRenderer.image(
                     text: label.text,
-                    color: theme.statusColor(for: label.status)
+                    color: theme.forkMenuBarTextColor
                 ))
             }
         } else {
