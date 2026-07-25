@@ -1,0 +1,176 @@
+name: Fork Release
+
+# Publishes a build of this fork to GitHub Releases, which is what gives the
+# Homebrew cask a stable download URL. Upstream's release.yml is left alone: it
+# targets tddworks' signing identity, Sparkle appcast and GitHub Pages, none of
+# which this fork has. This one only does what a cask needs.
+#
+# Trigger it by pushing a tag:
+#
+#     git tag fork-v0.4.73-fork.1 && git push origin fork-v0.4.73-fork.1
+#
+# The tag prefix is `fork-v`, not `v`, so tagging a release here can never
+# accidentally fire upstream's release.yml (which triggers on `v*`).
+#
+# Signing is secrets-gated. With no secrets set this produces an ad-hoc signed
+# release that installs with `--no-quarantine`; add the four Apple secrets and
+# the same workflow produces a notarized one that installs cleanly. Nothing
+# here needs changing when you make that switch.
+
+on:
+  push:
+    tags: ['fork-v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 0.4.73-fork.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fork-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # CFBundleVersion is a commit count
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            # refs/tags/fork-v0.4.73-fork.1 -> 0.4.73-fork.1
+            VERSION="${GITHUB_REF_NAME#fork-v}"
+          fi
+          [ -n "$VERSION" ] || { echo "Could not resolve a version."; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing $VERSION"
+
+      - name: Install Tuist
+        run: brew install --cask tuist
+
+      # Imports the Developer ID certificate into a throwaway keychain, and
+      # resolves the identity string that dev-build.sh will sign with. When the
+      # secret is absent every later step still works — the build just stays
+      # ad-hoc signed. Mirrors the keychain setup in upstream's release.yml and
+      # reuses the same secret names, so configuring one configures both.
+      - name: Import Developer ID certificate
+        id: signing
+        env:
+          P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          P12_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APP_IDENTITY: ${{ secrets.APP_IDENTITY }}
+        run: |
+          if [ -z "$P12_BASE64" ]; then
+            echo "::notice::No APPLE_CERTIFICATE_P12 secret set — building an ad-hoc signed release."
+            echo "identity=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          echo "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$P12_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          rm -f "$RUNNER_TEMP/certificate.p12"
+
+          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychain -d user | xargs)
+          # Without this, codesign blocks on a GUI prompt for the private key.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" >/dev/null 2>&1 || true
+
+          if [ -n "$APP_IDENTITY" ]; then
+            IDENTITY="$APP_IDENTITY"
+          else
+            IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+              | grep "Developer ID" | head -1 | awk -F '"' '{print $2}')"
+          fi
+          [ -n "$IDENTITY" ] || { echo "Certificate imported but no Developer ID identity found."; exit 1; }
+
+          echo "identity=$IDENTITY" >> "$GITHUB_OUTPUT"
+          echo "Signing as: $IDENTITY"
+
+      - name: Package
+        id: package
+        env:
+          CLAUDEBAR_SIGN_IDENTITY: ${{ steps.signing.outputs.identity }}
+          APP_STORE_CONNECT_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: ./scripts/fork-release.sh "${{ steps.version.outputs.version }}" --universal
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ZIP: ${{ steps.package.outputs.zip }}
+          SHA256: ${{ steps.package.outputs.sha256 }}
+          NOTARIZED: ${{ steps.package.outputs.notarized }}
+        run: |
+          if [ "$NOTARIZED" = "true" ]; then
+            INSTALL_NOTE=$'Signed with a Developer ID and notarized by Apple, so it installs with no extra flags.'
+            INSTALL_CMD='brew install --cask claudebar'
+          else
+            INSTALL_NOTE=$'This build is **ad-hoc signed**, not notarized, so Gatekeeper will refuse to open it unless Homebrew skips the quarantine flag.'
+            INSTALL_CMD='brew install --cask --no-quarantine claudebar'
+          fi
+
+          cat > "$RUNNER_TEMP/notes.md" <<EOF
+          Fork build of ClaudeBar, published so the Homebrew tap has something stable to point at.
+
+          ## Install
+
+          \`\`\`bash
+          brew tap johnfoland/tap
+          $INSTALL_CMD
+          \`\`\`
+
+          $INSTALL_NOTE
+
+          ## Verify the download
+
+          \`\`\`
+          sha256  $SHA256
+          \`\`\`
+
+          Sparkle's automatic update check is disabled in fork builds — the bundled
+          appcast points at upstream and would otherwise replace this with a stock
+          release. Homebrew handles updates instead: \`brew upgrade --cask claudebar\`.
+          EOF
+
+          gh release create "fork-v$VERSION" "$ZIP" \
+            --title "ClaudeBar $VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md"
+
+      # Optional. The tap re-checks on a schedule anyway, so this only shortens
+      # the gap between publishing a release and the cask pointing at it. Needs
+      # a PAT with `contents: write` on the tap repo, since GITHUB_TOKEN is
+      # scoped to this repository alone.
+      - name: Nudge the Homebrew tap
+        if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          gh api repos/johnfoland/homebrew-tap/dispatches \
+            -f event_type=claudebar-release \
+            || echo "::warning::Could not notify the tap; it will pick this up on its next scheduled check."
