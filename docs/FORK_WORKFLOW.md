@@ -178,6 +178,23 @@ change:
 The `.claude/skills/` in this repo (`add-provider`, `add-report`,
 `implement-feature`) walk through each of those.
 
+### The fork's source customizations
+
+What this fork changes in the app itself, and where a sync should look if a
+merge goes sideways:
+
+| Customization | Lives in | Upstream lines touched |
+|---------------|----------|------------------------|
+| Menu bar text is never status-tinted (always the menu bar's default color) | `Sources/App/ForkMenuBarStyle.swift` | 3 in `StatusItemLabelDriver.compose` — `theme.statusColor(for:)` → `theme.forkMenuBarTextColor` |
+| Menu bar reads `83% \| 25m • 51% \| 3d` instead of `5h 83% · 25m \| 7d 51% · 3d` | `Sources/Domain/Provider/ForkMenuBarLabelStyle.swift` | 1 in `StatusItemLabelDriver.currentLabelContent` — a `.map { $0.forkStyled(…) }` on the monitor's label |
+
+Both are transforms layered on top of upstream's output rather than edits to
+it, so upstream can keep changing how the label is composed or tinted. The
+restyling is pinned by `Tests/DomainTests/Provider/ForkMenuBarLabelStyleTests.swift`,
+which drives the real `QuotaMonitor.menuBarLabel(...)` — if upstream changes the
+prefixes or separators the fork rewrites, those tests fail instead of the menu
+bar quietly showing the wrong thing.
+
 ### Know the hot files
 
 Most-changed files upstream over the last 200 commits — every line you add to
