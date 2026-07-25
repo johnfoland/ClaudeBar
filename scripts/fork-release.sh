@@ -14,8 +14,8 @@
 # Signing is secrets-gated, so this same script covers both worlds:
 #
 #   CLAUDEBAR_SIGN_IDENTITY unset  ->  ad-hoc signature. Installs fine, but
-#                                      Gatekeeper blocks it unless the user
-#                                      passes --no-quarantine to brew.
+#                                      Gatekeeper blocks it unless the user sets
+#                                      HOMEBREW_CASK_OPTS=--no-quarantine.
 #   CLAUDEBAR_SIGN_IDENTITY set    ->  Developer ID + hardened runtime, and if
 #                                      the App Store Connect key is also
 #                                      present, notarized and stapled. Installs
@@ -118,7 +118,8 @@ echo "    notarized:  $NOTARIZED"
 if [ "$NOTARIZED" != "true" ]; then
     echo
     echo "    This build is ad-hoc signed, so Gatekeeper will block it unless it is"
-    echo "    installed with:  brew install --cask --no-quarantine johnfoland/tap/claudebar"
+    echo "    installed with:  HOMEBREW_CASK_OPTS=--no-quarantine \\"
+    echo "                       brew install --cask johnfoland/tap/claudebar"
 fi
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then

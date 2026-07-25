@@ -444,14 +444,27 @@ has anything to do, so bump the suffix on every release.
 To cut a release without tagging, use **Actions → Fork Release → Run workflow**
 and type the version.
 
-#### Gatekeeper, and why `--no-quarantine` may be needed
+#### Gatekeeper, and skipping quarantine
 
 Homebrew quarantines what it installs, and Gatekeeper refuses to open a
 quarantined app that isn't signed with a Developer ID and notarized. With no
 signing secrets configured the release is ad-hoc signed, so installing it takes:
 
 ```bash
-brew install --cask --no-quarantine johnfoland/tap/claudebar
+HOMEBREW_CASK_OPTS=--no-quarantine brew install --cask johnfoland/tap/claudebar
+```
+
+This is an environment variable, **not** a `brew install` switch. Current
+Homebrew rejects `--no-quarantine` on the command line with `Error: invalid
+option`; the option is read out of `HOMEBREW_CASK_OPTS` by
+`Homebrew::EnvConfig.cask_opts_quarantine?`, which scans the value in reverse
+and returns false on the first `--no-quarantine` it sees (defaulting to
+quarantine when neither appears).
+
+Clearing it after the fact works equally well:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/ClaudeBar.app
 ```
 
 To drop that flag, add four secrets to this repo — the same names upstream's
@@ -466,7 +479,7 @@ To drop that flag, add four secrets to this repo — the same names upstream's
 
 `fork-release.yml` detects them and switches to Developer ID signing, hardened
 runtime, notarization and stapling with no edits. It requires an Apple Developer
-Program membership ($99/yr); without one, ad-hoc plus `--no-quarantine` is a
+Program membership ($99/yr); without one, ad-hoc plus `HOMEBREW_CASK_OPTS` is a
 perfectly workable fork distribution.
 
 #### Handing a local build over to Homebrew

@@ -36,8 +36,13 @@ Gatekeeper will block it, because Homebrew quarantines what it installs.
 Install it without the quarantine flag:
 
 ```bash
-brew install --cask --no-quarantine johnfoland/tap/claudebar
+HOMEBREW_CASK_OPTS=--no-quarantine brew install --cask johnfoland/tap/claudebar
 ```
+
+Note this is an environment variable, not a command-line switch. Current
+Homebrew has no `--no-quarantine` flag on `brew install` — it reads the option
+out of `HOMEBREW_CASK_OPTS` instead, and errors with `invalid option` if you
+pass it directly.
 
 If you already installed it and macOS says the app "is damaged" or "cannot be
 opened", clear the flag in place:

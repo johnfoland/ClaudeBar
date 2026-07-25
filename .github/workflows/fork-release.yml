@@ -13,9 +13,9 @@ name: Fork Release
 # accidentally fire upstream's release.yml (which triggers on `v*`).
 #
 # Signing is secrets-gated. With no secrets set this produces an ad-hoc signed
-# release that installs with `--no-quarantine`; add the four Apple secrets and
-# the same workflow produces a notarized one that installs cleanly. Nothing
-# here needs changing when you make that switch.
+# release, which installs only with HOMEBREW_CASK_OPTS=--no-quarantine; add the
+# four Apple secrets and the same workflow produces a notarized one that
+# installs cleanly. Nothing here needs changing when you make that switch.
 
 on:
   push:
@@ -132,7 +132,7 @@ jobs:
             INSTALL_CMD='brew install --cask johnfoland/tap/claudebar'
           else
             INSTALL_NOTE=$'This build is **ad-hoc signed**, not notarized, so Gatekeeper will refuse to open it unless Homebrew skips the quarantine flag.'
-            INSTALL_CMD='brew install --cask --no-quarantine johnfoland/tap/claudebar'
+            INSTALL_CMD='HOMEBREW_CASK_OPTS=--no-quarantine brew install --cask johnfoland/tap/claudebar'
           fi
 
           cat > "$RUNNER_TEMP/notes.md" <<EOF
