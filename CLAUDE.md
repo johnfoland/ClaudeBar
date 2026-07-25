@@ -403,13 +403,24 @@ what keeps syncs painless.
 ./scripts/dev-build.sh --install  # archive + install to /Applications
 ./scripts/dev-build.sh --zip      # archive -> .build/ClaudeBar-<version>.zip
 ./scripts/dev-build.sh --open     # generate project + open Xcode
+./scripts/next-version.sh         # what the next release version would be
 ./scripts/fork-release.sh 0.4.73-fork.1 --universal   # release zip + sha256
+./scripts/bootstrap-tap.sh        # create the tap repo (one-off; edits sync themselves)
 ```
 
-Releases go out by tag (`git tag fork-v0.4.73-fork.1 && git push origin --tags`),
-which publishes a GitHub Release and updates the Homebrew cask in
-`johnfoland/homebrew-tap`. The `fork-v` prefix keeps it from triggering
-upstream's `release.yml`, which fires on `v*`.
+**Releasing is automatic — do not tag by hand.** Every push to `mine` runs
+`fork-release.yml`, which tests, computes the version, builds universal,
+publishes a GitHub Release and creates the `fork-v<version>` tag itself. The tap
+then rewrites its cask within the hour, and `brew upgrade --cask
+johnfoland/tap/claudebar` picks it up.
+
+The version is `<upstream>-fork.<n>` from `scripts/next-version.sh`: upstream
+version from the newest `## [x.y.z]` heading in `CHANGELOG.md`, `n` one above
+the highest existing release for that upstream version (so an upstream bump
+resets it to 1). `[skip release]` in a commit message suppresses the release.
+
+The `fork-v` prefix keeps fork releases from triggering upstream's
+`release.yml`, which fires on `v*`.
 
 Prefer `./scripts/dev-build.sh` over raw `tuist`/`xcodebuild` — it runs
 `scripts/fix-swiftterm-metal.sh`, without which the build fails on SwiftTerm's
@@ -425,11 +436,18 @@ install-action build and drops it, matching upstream's `release.yml`.
 - `.github/workflows/sync-upstream.yml` — nightly: fast-forwards `main`, merges
   it into `mine`, builds and tests, and pushes only if green. Conflicts or
   failures open a PR instead of touching `mine`.
-- `.github/workflows/fork-ci.yml` — build + test on push/PR to `mine`
-  (upstream's workflows only trigger on `main`/`develop`).
-- `.github/workflows/fork-release.yml` — on a `fork-v*` tag: archive, sign,
-  publish a GitHub Release. Signing is secrets-gated — ad-hoc without them,
-  Developer ID + notarized with them, no edits either way.
+- `.github/workflows/fork-ci.yml` — build + test on PRs to `mine`
+  (upstream's workflows only trigger on `main`/`develop`). Not on push: pushes
+  to `mine` go through fork-release.yml, which runs the same tests.
+- `.github/workflows/fork-release.yml` — on every push to `mine`: test, version,
+  archive, sign, publish a GitHub Release, tag it. Signing is secrets-gated —
+  ad-hoc without them, Developer ID + notarized with them, no edits either way.
+- `homebrew/` — contents of the `johnfoland/homebrew-tap` repo, and the source
+  of truth for the cask. Its `update-cask.yml` polls this repo hourly, pulls
+  `homebrew/Casks/claudebar.rb` from `mine`, stamps the newest release's version
+  and sha256 into it, and commits if anything changed — so cask edits propagate
+  on their own. It lives on the tap side so it needs no cross-repo token.
+  `bootstrap-tap.sh` is only for creating the tap repo in the first place.
 - `scripts/hooks/` — warns after a merge or checkout when `Project.swift` or
   `Tuist/Package.swift` changed and the generated Xcode project is stale.
 

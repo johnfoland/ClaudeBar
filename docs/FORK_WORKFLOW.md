@@ -425,24 +425,74 @@ this fork's. The qualified form is unambiguous, and it auto-taps, so no separate
 Both casks install to the same `/Applications/ClaudeBar.app`, so they cannot be
 installed side by side; see `--adopt` below for switching between them.
 
-Publishing a new version is one tag:
+#### Publishing is automatic
 
-```bash
-git tag fork-v0.4.73-fork.1
-git push origin fork-v0.4.73-fork.1
+There is nothing to tag and no version to pick. Merge to `mine`, and the rest
+happens on its own:
+
+```
+merge to mine
+   └─ fork-release.yml   run tests, compute the version, build universal,
+      (~20 min)          publish a GitHub Release, create the fork-v tag
+         └─ the tap      picks the release up within the hour and rewrites
+                         the cask's version + sha256
+               └─ you    brew upgrade --cask johnfoland/tap/claudebar
 ```
 
-That fires `.github/workflows/fork-release.yml`, which archives a universal
-build, publishes it as a GitHub Release, and (via a scheduled job in the tap)
-updates the cask's `version`, `url` and `sha256` automatically. The prefix is
-`fork-v`, not `v`, so a fork release can never trigger upstream's `release.yml`.
+So the only two commands in the loop are the merge and, whenever you feel like
+picking it up:
 
-The version stamp is yours to pick — `0.4.73-fork.1` reads as "upstream 0.4.73,
-first fork build". Homebrew compares versions to decide whether `brew upgrade`
-has anything to do, so bump the suffix on every release.
+```bash
+brew upgrade --cask johnfoland/tap/claudebar
+```
 
-To cut a release without tagging, use **Actions → Fork Release → Run workflow**
-and type the version.
+**Skipping a release.** Put `[skip release]` anywhere in the commit message and
+the workflow won't run — for docs-only commits that shouldn't mint a build.
+
+**Forcing one.** **Actions → Fork Release → Run workflow**. Leave the version
+blank to compute the next one as usual, or type one to override it. Publishing
+over a version that already exists fails loudly rather than doing nothing.
+
+**Making it instant.** The tap polls hourly. Add a `HOMEBREW_TAP_TOKEN` secret
+to this repo — a PAT with `contents: write` on `homebrew-tap` — and the release
+notifies the tap directly, so the cask updates in seconds. Everything works
+without it; the only difference is the wait.
+
+**Editing the cask.** `homebrew/Casks/claudebar.rb` in *this* repo is the source
+of truth. The tap's hourly job fetches it from `mine`, stamps the newest
+release's version and sha256 into it, and commits if the result differs from
+what it already has — so a new `zap` path or a changed `postflight` propagates
+on its own, with no release needed and nothing to re-run.
+`scripts/bootstrap-tap.sh` is only for creating the tap repo in the first place.
+
+#### How the version number is chosen
+
+`scripts/next-version.sh` computes `<upstream-version>-fork.<n>`:
+
+- **`<upstream-version>`** is read from the newest `## [x.y.z]` heading in
+  `CHANGELOG.md`, the same source `dev-build.sh` stamps local builds from. A
+  fork build therefore always says which upstream release it is built on.
+- **`<n>`** is one higher than the highest existing release *for that same
+  upstream version*, or 1 if there is none.
+
+The reset falls out of that for free. When a nightly upstream sync bumps
+`CHANGELOG.md` to 0.4.74, no `fork-v0.4.74-fork.*` tags exist yet, so the next
+release is `0.4.74-fork.1` rather than continuing 0.4.73's numbering.
+
+Homebrew orders these correctly, which is what makes `brew upgrade` work:
+`Version` tokenizes `0.4.73-fork.2` as `[0, 4, 73, "fork", 2]` and compares
+numeric tokens by integer value, so `fork.10` sorts above `fork.9` instead of
+below it the way a plain string compare would.
+
+Run it yourself to see what the next release would be:
+
+```bash
+./scripts/next-version.sh
+# 0.4.73-fork.2
+```
+
+It takes `--tags-from FILE` to compute against a fixture instead of querying
+GitHub, which is how its behaviour is tested.
 
 #### Gatekeeper and quarantine
 

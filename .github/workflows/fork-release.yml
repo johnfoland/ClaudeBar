@@ -5,12 +5,20 @@ name: Fork Release
 # targets tddworks' signing identity, Sparkle appcast and GitHub Pages, none of
 # which this fork has. This one only does what a cask needs.
 #
-# Trigger it by pushing a tag:
+# There is nothing to remember and nothing to tag: every push to `mine` that
+# passes tests is built, versioned, released, and picked up by the tap. To get a
+# change onto your Macs, merge it to `mine` and later run
 #
-#     git tag fork-v0.4.73-fork.1 && git push origin fork-v0.4.73-fork.1
+#     brew upgrade --cask johnfoland/tap/claudebar
 #
-# The tag prefix is `fork-v`, not `v`, so tagging a release here can never
-# accidentally fire upstream's release.yml (which triggers on `v*`).
+# Put [skip release] in a commit message to land something without publishing —
+# useful for docs-only commits.
+#
+# The version is computed by scripts/next-version.sh rather than typed: it reads
+# the upstream version from CHANGELOG.md and adds one to the highest existing
+# fork release for that version. The tag it publishes under is `fork-v<version>`,
+# created by this workflow. The `fork-v` prefix (not `v`) is what keeps a fork
+# release from ever firing upstream's release.yml, which triggers on `v*`.
 #
 # Signing is secrets-gated. With no secrets set this produces an ad-hoc signed
 # release, which the cask's postflight makes installable by clearing quarantine;
@@ -19,12 +27,12 @@ name: Fork Release
 
 on:
   push:
-    tags: ['fork-v*']
+    branches: [mine]
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g. 0.4.73-fork.1)'
-        required: true
+        description: 'Version override (leave blank to compute the next one)'
+        required: false
         type: string
 
 permissions:
@@ -39,6 +47,12 @@ jobs:
     name: Build and publish
     runs-on: macos-26
 
+    # Docs-only commits should not mint a release. workflow_dispatch has no
+    # head_commit, so it is allowed through before the message is inspected.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      !contains(github.event.head_commit.message, '[skip release]')
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -47,19 +61,35 @@ jobs:
 
       - name: Resolve version
         id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OVERRIDE: ${{ inputs.version }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ inputs.version }}"
+          if [ -n "${OVERRIDE:-}" ]; then
+            VERSION="$OVERRIDE"
+            echo "Using the version supplied to workflow_dispatch."
           else
-            # refs/tags/fork-v0.4.73-fork.1 -> 0.4.73-fork.1
-            VERSION="${GITHUB_REF_NAME#fork-v}"
+            VERSION="$(./scripts/next-version.sh)"
           fi
           [ -n "$VERSION" ] || { echo "Could not resolve a version."; exit 1; }
+
+          # Releasing over an existing tag would silently do nothing useful, so
+          # fail loudly instead. Reachable only via an override.
+          if gh release view "fork-v$VERSION" >/dev/null 2>&1; then
+            echo "::error::fork-v$VERSION already exists."
+            exit 1
+          fi
+
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Releasing $VERSION"
 
       - name: Install Tuist
         run: brew install --cask tuist
+
+      # A release lands on real machines via Homebrew, so it runs the suite
+      # first. Packaging then reuses the workspace this generates.
+      - name: Test
+        run: ./scripts/dev-build.sh --test
 
       # Imports the Developer ID certificate into a throwaway keychain, and
       # resolves the identity string that dev-build.sh will sign with. When the
@@ -117,7 +147,7 @@ jobs:
           APP_STORE_CONNECT_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-        run: ./scripts/fork-release.sh "${{ steps.version.outputs.version }}" --universal
+        run: ./scripts/fork-release.sh "${{ steps.version.outputs.version }}" --universal --skip-generate
 
       - name: Publish release
         env:
@@ -166,7 +196,10 @@ jobs:
           \`brew upgrade --cask johnfoland/tap/claudebar\`.
           EOF
 
+          # --target creates the fork-v tag at this commit. Nothing pushes a tag
+          # by hand any more; the release is what mints it.
           gh release create "fork-v$VERSION" "$ZIP" \
+            --target "$GITHUB_SHA" \
             --title "ClaudeBar $VERSION" \
             --notes-file "$RUNNER_TEMP/notes.md"
 
