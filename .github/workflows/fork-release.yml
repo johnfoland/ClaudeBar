@@ -167,10 +167,16 @@ jobs:
       # a PAT with `contents: write` on the tap repo, since GITHUB_TOKEN is
       # scoped to this repository alone.
       - name: Nudge the Homebrew tap
-        if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
+          # Gated on the value rather than on `if: secrets.X != ''` — the
+          # secrets context is not in GitHub's availability table for a
+          # step-level if, so that condition is not reliable.
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::notice::No HOMEBREW_TAP_TOKEN set — the tap will pick this release up on its next hourly check."
+            exit 0
+          fi
           gh api repos/johnfoland/homebrew-tap/dispatches \
             -f event_type=claudebar-release \
             || echo "::warning::Could not notify the tap; it will pick this up on its next scheduled check."
