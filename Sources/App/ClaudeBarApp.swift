@@ -100,6 +100,14 @@ struct ClaudeBarApp: App {
                 probe: MiniMaxUsageProbe(settingsRepository: settingsRepository),
                 settingsRepository: settingsRepository
             ),
+            DeepSeekProvider(
+                probe: DeepSeekUsageProbe(settingsRepository: settingsRepository),
+                settingsRepository: settingsRepository
+            ),
+            VercelProvider(
+                probe: VercelUsageProbe(settingsRepository: settingsRepository),
+                settingsRepository: settingsRepository
+            ),
             AlibabaProvider(
                 probe: AlibabaUsageProbe(settingsRepository: settingsRepository, cookieProvider: AlibabaBrowserCookieProvider()),
                 settingsRepository: settingsRepository
@@ -109,11 +117,15 @@ struct ClaudeBarApp: App {
                 settingsRepository: settingsRepository
             ),
             OpenCodeProvider(
-                probe: OpenCodeUsageProbe(),
+                probe: OpenCodeAPIUsageProbe(fallback: OpenCodeUsageProbe()),
                 settingsRepository: settingsRepository
             ),
             OmpProvider(
                 probe: OmpUsageProbe(),
+                settingsRepository: settingsRepository
+            ),
+            GrokProvider(
+                probe: GrokUsageProbe(),
                 settingsRepository: settingsRepository
             ),
         ])
@@ -140,6 +152,7 @@ struct ClaudeBarApp: App {
             sessionMonitor: sessionMonitor
         )
         statusItemDriver.startMonitoringLifecycle()
+        statusItemDriver.startAttachLifecycle()
 
         // Load user extensions from ~/.claudebar/extensions/
         let extensionRegistry = ExtensionRegistry(
@@ -272,6 +285,29 @@ struct ClaudeBarApp: App {
             statusItemDriver.attach(statusItem)
         }
         .menuBarExtraStyle(.window)
+
+        // Standalone Settings window (opened from the popover's gear button).
+        // Hidden title bar: the sidebar runs the full window height and the
+        // traffic lights overlay its top — see SettingsWindowView.
+        Window("ClaudeBar Settings", id: "settings") {
+            Group {
+                #if ENABLE_SPARKLE
+                SettingsWindowView(monitor: monitor) { enabled in
+                    if enabled { startHookServer() } else { stopHookServer() }
+                }
+                .appThemeProvider(themeModeId: settings.themeMode)
+                .environment(\.sparkleUpdater, sparkleUpdater)
+                #else
+                SettingsWindowView(monitor: monitor) { enabled in
+                    if enabled { startHookServer() } else { stopHookServer() }
+                }
+                .appThemeProvider(themeModeId: settings.themeMode)
+                #endif
+            }
+        }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 980, height: 660)
+        .windowResizability(.contentMinSize)
     }
 
 }

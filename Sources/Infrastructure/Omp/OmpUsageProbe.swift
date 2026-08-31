@@ -64,7 +64,7 @@ public struct OmpUsageProbe: UsageProbe {
 
         let result: CLIResult
         do {
-            result = try cliExecutor.execute(
+            result = try await cliExecutor.execute(
                 binary: ompBinary,
                 args: ["usage", "--json"],
                 input: nil,
@@ -131,6 +131,7 @@ public struct OmpUsageProbe: UsageProbe {
         var accountRows: [ExtensionMetric] = []
         var seenRowLabels: Set<String> = []
         var seenGroupTitles: Set<String> = []
+        var seenMenuBarTitles: Set<String> = []
 
         for (index, report) in payload.reports.enumerated() {
             let needsDiscriminator = providerReportCounts[report.provider, default: 0] > 1
@@ -195,7 +196,9 @@ public struct OmpUsageProbe: UsageProbe {
                         dollarUsed: monetaryAmounts?.used,
                         dollarCap: monetaryAmounts?.cap,
                         group: group,
-                        compactTitle: Self.compactTitle(limit: limit, meter: meter, providerName: providerName)
+                        compactTitle: Self.compactTitle(limit: limit, meter: meter, providerName: providerName),
+                        menuBarTitle: Self.menuBarTitle(label: label, discriminator: discriminator)
+                            .map { Self.uniqueLabel($0, seen: &seenMenuBarTitles) }
                     )
                 )
             }
@@ -444,6 +447,34 @@ public struct OmpUsageProbe: UsageProbe {
         }
         parts.append(display.token)
         return parts.joined(separator: " ")
+    }
+
+    /// Menu-bar variant of a quota label: identical text with a long account
+    /// discriminator truncated to a short prefix plus an ellipsis
+    /// ("Claude 7d · jkjk987654321012" → "Claude 7d · jkjk987…"). The menu
+    /// bar renders the whole label as a window prefix, and a 16-character
+    /// token wastes most of its width. Returns nil when the label carries no
+    /// discriminator or it is already short enough — the menu bar then falls
+    /// back to the full label. Distinct discriminators can share a condensed
+    /// prefix without tripping the full-label "(2)" guard, so callers must
+    /// uniquify the result (`uniqueLabel`) before display. Purely
+    /// presentational: quota labels and persisted quota keys keep the full
+    /// discriminator.
+    static func menuBarTitle(label: String, discriminator: String?) -> String? {
+        guard let discriminator, !discriminator.isEmpty else { return nil }
+        let condensed = condensedDiscriminator(discriminator)
+        guard condensed != discriminator else { return nil }
+        return label.replacingOccurrences(of: "· \(discriminator)", with: "· \(condensed)")
+    }
+
+    /// Truncates a quota-label discriminator for menu bar display: tokens
+    /// longer than 8 characters keep their first 7 plus an ellipsis. The
+    /// 8-character budget already covers every opaque-id discriminator
+    /// (`accountDiscriminator` caps those at 8), so only long email local
+    /// parts get shortened.
+    static func condensedDiscriminator(_ discriminator: String) -> String {
+        guard discriminator.count > 8 else { return discriminator }
+        return "\(discriminator.prefix(7))…"
     }
 
     /// Maps Oh My Pi upstream provider ids to short display names.

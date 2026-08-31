@@ -52,6 +52,28 @@ public final class ObservationRenderSync<Content: Equatable> {
         sync()
     }
 
+    /// Re-reads and renders *only if the value changed*, without arming a new
+    /// observation registration.
+    ///
+    /// For callers that drive their own tick (the menu bar's countdown ticks
+    /// twice a second) and must not go through `renderNow`. Each `sync` arms a
+    /// fresh `withObservationTracking` registration, and a registration is only
+    /// torn down when it fires — so a ticking caller would accumulate one per
+    /// tick, all of them armed on the same properties, until some observed
+    /// value finally changed and fired the whole backlog at once.
+    ///
+    /// Skipping the re-arm is safe: the registration from the last real `sync`
+    /// is still armed and still catches genuine state changes. Reading the
+    /// values untracked here does not consume it.
+    public func refreshNow() {
+        guard isStarted else { return }
+        let content = read()
+        if content != lastRendered {
+            lastRendered = content
+            render(content)
+        }
+    }
+
     private func sync() {
         guard isStarted else { return }
         let content = withObservationTracking {

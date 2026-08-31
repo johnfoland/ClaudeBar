@@ -436,6 +436,111 @@ struct OmpUsageProbeParsingTests {
     }
 
     @Test
+    func `condenses long discriminators into the menu bar title`() throws {
+        // A 16-character email local part is a legitimate quota-key
+        // discriminator but wastes most of the menu bar's width — the quota
+        // carries a truncated variant for display while the persisted key
+        // keeps the full token.
+        let json = """
+        { "reports": [
+          {
+            "provider": "anthropic",
+            "limits": [ {
+              "scope": { "windowId": "7d" },
+              "window": { "id": "7d", "durationMs": 604800000 },
+              "amount": { "remainingFraction": 0.69 }
+            } ],
+            "metadata": { "email": "jkjk987654321012@example.com" }
+          },
+          {
+            "provider": "anthropic",
+            "limits": [ {
+              "scope": { "windowId": "7d" },
+              "window": { "id": "7d", "durationMs": 604800000 },
+              "amount": { "remainingFraction": 0.4 }
+            } ],
+            "metadata": { "email": "work@example.com" }
+          }
+        ] }
+        """
+        let snapshot = try OmpUsageProbe.parse(json)
+
+        let long = try #require(snapshot.quotas.first {
+            $0.quotaType.displayName == "Claude 7d · jkjk987654321012"
+        })
+        #expect(long.menuBarTitle == "Claude 7d · jkjk987…")
+
+        // Short discriminators need no condensing — nil falls back to the
+        // full label in the menu bar.
+        let short = try #require(snapshot.quotas.first {
+            $0.quotaType.displayName == "Claude 7d · work"
+        })
+        #expect(short.menuBarTitle == nil)
+    }
+
+    @Test
+    func `suffixes menu bar titles when condensed discriminators collide`() throws {
+        // Two distinct discriminators can share the 7-character condensed
+        // prefix; the full labels differ, so the label-level "(2)" guard
+        // never fires. The condensed titles must still stay unique, or the
+        // menu bar and the Settings quota picker chips become
+        // indistinguishable.
+        let json = """
+        { "reports": [
+          {
+            "provider": "anthropic",
+            "limits": [ {
+              "scope": { "windowId": "7d" },
+              "window": { "id": "7d", "durationMs": 604800000 },
+              "amount": { "remainingFraction": 0.69 }
+            } ],
+            "metadata": { "email": "jkjk987654321012@example.com" }
+          },
+          {
+            "provider": "anthropic",
+            "limits": [ {
+              "scope": { "windowId": "7d" },
+              "window": { "id": "7d", "durationMs": 604800000 },
+              "amount": { "remainingFraction": 0.4 }
+            } ],
+            "metadata": { "email": "jkjk987999999999@example.com" }
+          }
+        ] }
+        """
+        let snapshot = try OmpUsageProbe.parse(json)
+
+        let titles = snapshot.quotas.compactMap(\.menuBarTitle)
+        #expect(titles == [
+            "Claude 7d · jkjk987…",
+            "Claude 7d · jkjk987… (2)",
+        ])
+        // Full labels — and therefore persisted quota keys — keep the
+        // untruncated discriminators and never collided in the first place.
+        #expect(Set(snapshot.quotas.map(\.quotaType.quotaKey)).count == 2)
+    }
+
+    @Test
+    func `keeps single-account quotas free of menu bar title overrides`() throws {
+        // One account per provider gets no discriminator, so there is
+        // nothing to condense.
+        let json = """
+        { "reports": [ {
+            "provider": "anthropic",
+            "limits": [ {
+              "scope": { "windowId": "5h" },
+              "window": { "id": "5h", "durationMs": 18000000 },
+              "amount": { "remainingFraction": 0.5 }
+            } ],
+            "metadata": { "email": "jkjk987654321012@example.com" }
+        } ] }
+        """
+        let snapshot = try OmpUsageProbe.parse(json)
+
+        #expect(snapshot.quotas.count == 1)
+        #expect(snapshot.quotas[0].menuBarTitle == nil)
+    }
+
+    @Test
     func `qualifies multiple meters sharing one window`() throws {
         // Z.ai can meter tokens and requests over the same window; both
         // must stay distinguishable without degrading to bare ordinals.

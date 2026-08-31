@@ -197,7 +197,7 @@ struct QuotaMonitorTests {
 
     @Test
     func `menu bar duration display returns compact reset time for selected quota`() async {
-        // Given - claude session quota with reset ~3h away
+        // Given - claude session quota with reset ~3h 58m away
         let settings = makeSettingsRepository()
         let probe = MockUsageProbe()
         given(probe).isAvailable().willReturn(true)
@@ -208,7 +208,7 @@ struct QuotaMonitorTests {
                     percentRemaining: 75,
                     quotaType: .session,
                     providerId: "claude",
-                    resetsAt: Date().addingTimeInterval(3.0 * 3600 + 30)
+                    resetsAt: Date().addingTimeInterval(3.0 * 3600 + 58.0 * 60 + 30)
                 ),
             ],
             capturedAt: Date()
@@ -224,7 +224,7 @@ struct QuotaMonitorTests {
         )
 
         // Then
-        #expect(display?.text == "3h")
+        #expect(display?.text == "3:58")
         #expect(display?.status == .healthy)
     }
 
@@ -427,14 +427,48 @@ struct QuotaMonitorTests {
     }
 
     @Test
+    func `menu bar label prefers the quota's menuBarTitle for window prefixes`() async {
+        // Given: an aggregated quota whose full label carries a long account
+        // discriminator, condensed by the probe into `menuBarTitle`; the
+        // weekly window carries no override
+        let monitor = await makeRefreshedClaudeMonitor(quotas: [
+            UsageQuota(
+                percentRemaining: 69,
+                quotaType: .timeLimit("Claude 7d · jkjk987654321012"),
+                providerId: "claude",
+                menuBarTitle: "Claude 7d · jkjk987…"
+            ),
+            UsageQuota(percentRemaining: 35, quotaType: .weekly, providerId: "claude"),
+        ])
+
+        // When
+        let label = monitor.menuBarLabel(
+            providerId: "claude",
+            primaryQuotaKey: "time:Claude 7d · jkjk987654321012",
+            secondaryQuotaKey: "weekly",
+            showPercentage: true,
+            showDuration: false,
+            mode: .remaining
+        )
+
+        // Then: the condensed title replaces the full label in the joined
+        // text and the segment; windows without an override keep shortLabel
+        #expect(label?.text == "Claude 7d · jkjk987… 69% | 7d 35%")
+        #expect(label?.segments == [
+            MenuBarLabel.Segment(text: "Claude 7d · jkjk987… 69%", status: .healthy),
+            MenuBarLabel.Segment(text: "7d 35%", status: .warning),
+        ])
+    }
+
+    @Test
     func `menu bar label segments cover the duration-only variant`() async {
-        // Given: session quota with reset ~3h away
+        // Given: session quota with reset ~3h 58m away
         let monitor = await makeRefreshedClaudeMonitor(quotas: [
             UsageQuota(
                 percentRemaining: 75,
                 quotaType: .session,
                 providerId: "claude",
-                resetsAt: Date().addingTimeInterval(3.0 * 3600 + 30)
+                resetsAt: Date().addingTimeInterval(3.0 * 3600 + 58.0 * 60 + 30)
             ),
         ])
 
@@ -449,9 +483,9 @@ struct QuotaMonitorTests {
         )
 
         // Then
-        #expect(label?.text == "3h")
+        #expect(label?.text == "3:58")
         #expect(label?.segments == [
-            MenuBarLabel.Segment(text: "3h", status: .healthy),
+            MenuBarLabel.Segment(text: "3:58", status: .healthy),
         ])
     }
 
@@ -463,7 +497,7 @@ struct QuotaMonitorTests {
                 percentRemaining: 75,
                 quotaType: .session,
                 providerId: "claude",
-                resetsAt: Date().addingTimeInterval(3.0 * 3600 + 30)
+                resetsAt: Date().addingTimeInterval(3.0 * 3600 + 58.0 * 60 + 30)
             ),
             UsageQuota(
                 percentRemaining: 35,
@@ -485,10 +519,10 @@ struct QuotaMonitorTests {
 
         // Then: segments carry the full "percentage · duration" window texts,
         // each with its own per-window status (matching the dual-window test)
-        #expect(label?.text == "5h 75% · 3h | 7d 35% · 6d")
+        #expect(label?.text == "5h 75% · 3:58 | 7d 35% · 6d")
         #expect(label?.status == .warning)
         #expect(label?.segments == [
-            MenuBarLabel.Segment(text: "5h 75% · 3h", status: .healthy),
+            MenuBarLabel.Segment(text: "5h 75% · 3:58", status: .healthy),
             MenuBarLabel.Segment(text: "7d 35% · 6d", status: .warning),
         ])
     }

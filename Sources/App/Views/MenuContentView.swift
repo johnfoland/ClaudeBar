@@ -18,12 +18,15 @@ struct MenuContentView: View {
     #if ENABLE_SPARKLE
     @Environment(\.sparkleUpdater) private var sparkleUpdater
     #endif
+    @Environment(\.openWindow) private var openWindow
     @State private var isHoveringRefresh = false
     @State private var animateIn = false
-    @State private var showSettings = false
     @State private var showSharePass = false
     @State private var settings = AppSettings.shared
     @State private var hasRequestedNotificationPermission = false
+    @State private var pillsOverflow = false
+    @State private var pillsContentWidth: CGFloat = 0
+    @State private var pillsViewportWidth: CGFloat = 0
 
     /// The currently selected provider ID (from monitor, which is @Observable)
     private var selectedProviderId: String {
@@ -54,54 +57,49 @@ struct MenuContentView: View {
             // Theme overlay (e.g., snowfall for Christmas)
             theme.overlayView
 
-            if showSettings {
-                // Settings View
-                SettingsContentView(showSettings: $showSettings, monitor: monitor)
-            } else {
-                // Main Content
-                VStack(spacing: 0) {
-                    // Header with branding
-                    headerView
-                        .padding(.horizontal, 16)
-                        .padding(.top, 16)
-                        .padding(.bottom, 12)
+            // Main Content
+            VStack(spacing: 0) {
+                // Header with branding
+                headerView
+                    .padding(.horizontal, 16)
+                    .padding(.top, 16)
+                    .padding(.bottom, 12)
 
-                    // Provider Pills (hidden in overview mode)
-                    if !settings.overviewModeEnabled {
-                        providerPills
-                            .padding(.horizontal, 16)
-                            .padding(.bottom, 16)
-                    }
-
-                    // Session Indicator (shown when Claude Code is active)
-                    if let session = sessionMonitor.activeSession {
-                        SessionIndicatorView(session: session)
-                            .padding(.horizontal, 16)
-                            .padding(.bottom, 8)
-                    }
-
-                    // Main Content Area — hugs its content, but caps at the
-                    // screen height and scrolls beyond it (aggregating
-                    // providers can show a dozen cards; the action bar must
-                    // never be pushed off-screen).
-                    ScrollView(.vertical, showsIndicators: true) {
-                        VStack(spacing: 12) {
-                            metricsContent
-                        }
+                // Provider Pills (hidden in overview mode)
+                if !settings.overviewModeEnabled {
+                    providerPills
                         .padding(.horizontal, 16)
                         .padding(.bottom, 16)
-                    }
-                    .frame(maxHeight: contentMaxHeight)
-                    // Recreate the scroll view when the shown content
-                    // changes, so a newly selected provider starts at the
-                    // top instead of inheriting the previous scroll offset.
-                    .id(settings.overviewModeEnabled ? "overview" : monitor.selectedProviderId)
-
-                    // Bottom Action Bar
-                    actionBar
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 12)
                 }
+
+                // Session Indicator (shown when Claude Code is active)
+                if let session = sessionMonitor.activeSession {
+                    SessionIndicatorView(session: session)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 8)
+                }
+
+                // Main Content Area — hugs its content, but caps at the
+                // screen height and scrolls beyond it (aggregating
+                // providers can show a dozen cards; the action bar must
+                // never be pushed off-screen).
+                ScrollView(.vertical, showsIndicators: true) {
+                    VStack(spacing: 12) {
+                        metricsContent
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+                }
+                .frame(maxHeight: contentMaxHeight)
+                // Recreate the scroll view when the shown content
+                // changes, so a newly selected provider starts at the
+                // top instead of inheriting the previous scroll offset.
+                .id(settings.overviewModeEnabled ? "overview" : monitor.selectedProviderId)
+
+                // Bottom Action Bar
+                actionBar
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
             }
 
             // Share Pass Overlay
@@ -110,6 +108,16 @@ struct MenuContentView: View {
                 SharePassOverlay(pass: guestPass) {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         showSharePass = false
+                    }
+                }
+            }
+
+            // Share Pass Error Overlay
+            if let claudeProvider = selectedProvider as? ClaudeProvider,
+               let passError = claudeProvider.passError {
+                SharePassErrorOverlay(message: passError.localizedDescription) {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        claudeProvider.clearPassError()
                     }
                 }
             }
@@ -276,13 +284,24 @@ struct MenuContentView: View {
         }
     }
 
-    /// Status of the currently selected provider
-    private var selectedProviderStatus: QuotaStatus {
-        guard let snapshot = selectedProvider?.snapshot else { return .healthy }
+    /// Status of the currently selected provider, nil when it has no snapshot.
+    private var selectedProviderStatus: QuotaStatus? {
+        guard let snapshot = selectedProvider?.snapshot else { return nil }
         if settings.burnRateWarningEnabled {
             return snapshot.paceAwareOverallStatus(burnRateThreshold: settings.burnRateThreshold)
         }
         return snapshot.overallStatus
+    }
+
+    /// What the header pill says. A provider that failed to probe reads as
+    /// "UNAVAILABLE" rather than borrowing a green "HEALTHY" it has no data
+    /// for (#259).
+    private var selectedProviderBadge: ProviderBadgeState {
+        ProviderBadgeState(
+            isSyncing: isSelectedProviderSyncing,
+            quotaStatus: selectedProviderStatus,
+            hasError: selectedProvider?.lastError != nil
+        )
     }
 
     /// Whether the selected provider is currently syncing
@@ -291,7 +310,7 @@ struct MenuContentView: View {
     }
 
     private var statusBadge: some View {
-        let statusColor = theme.statusColor(for: selectedProviderStatus)
+        let statusColor = selectedProviderBadge.badgeColor(theme)
 
         return HStack(spacing: 6) {
             // Animated pulse dot
@@ -317,8 +336,7 @@ struct MenuContentView: View {
     }
 
     private var statusText: String {
-        if isSelectedProviderSyncing { return "Syncing..." }
-        return selectedProviderStatus.badgeText
+        selectedProviderBadge.badgeText
     }
 
     /// Help text for settings button, includes update info if available
@@ -354,10 +372,49 @@ struct MenuContentView: View {
                 }
             }
             .background(HorizontalScrollBooster())
+            .overlay {
+                GeometryReader { geo in
+                    Color.clear.preference(key: PillsContentWidthKey.self, value: geo.size.width)
+                }
+            }
+            .fixedSize(horizontal: true, vertical: false)
+        }
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(key: PillsViewportWidthKey.self, value: geo.size.width)
+            }
+        )
+        .onPreferenceChange(PillsContentWidthKey.self) { contentWidth in
+            updatePillsOverflow(contentWidth: contentWidth)
+        }
+        .onPreferenceChange(PillsViewportWidthKey.self) { viewportWidth in
+            updatePillsOverflow(viewportWidth: viewportWidth)
+        }
+        .mask {
+            HStack(spacing: 0) {
+                Rectangle().fill(.white)
+                if pillsOverflow {
+                    LinearGradient(
+                        colors: [.white, .clear],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: 28)
+                }
+            }
         }
         .opacity(animateIn ? 1 : 0)
         .offset(y: animateIn ? 0 : 10)
         .animation(.easeOut(duration: 0.5).delay(0.1), value: animateIn)
+    }
+
+    private func updatePillsOverflow(contentWidth: CGFloat? = nil, viewportWidth: CGFloat? = nil) {
+        if let contentWidth { pillsContentWidth = contentWidth }
+        if let viewportWidth { pillsViewportWidth = viewportWidth }
+        let overflows = pillsViewportWidth > 0 && pillsContentWidth > pillsViewportWidth + 1
+        if pillsOverflow != overflows {
+            pillsOverflow = overflows
+        }
     }
 
     // MARK: - Metrics Content
@@ -525,6 +582,7 @@ struct MenuContentView: View {
         // cards to collapse; the note renders inline in the header.
         let isNoteOnly = group.quotas.isEmpty
         let isCollapsed = !isNoteOnly && collapsedQuotaGroups.contains(group.id)
+        let sharedReset = group.quotas.sharedResetDescription()
         return VStack(alignment: .leading, spacing: 8) {
             Button {
                 withAnimation(.easeOut(duration: 0.15)) {
@@ -582,14 +640,36 @@ struct MenuContentView: View {
                         .foregroundStyle(theme.textTertiary)
                 }
 
+                if let sharedReset {
+                    sharedResetRow(sharedReset)
+                }
+
                 TwoColumnCardGrid(
                     items: Array(group.quotas.enumerated()),
                     id: \.element.quotaType
                 ) { entry in
-                    WrappedStatCard(quota: entry.element, delay: baseDelay + Double(entry.offset) * 0.08)
+                    WrappedStatCard(
+                        quota: entry.element,
+                        delay: baseDelay + Double(entry.offset) * 0.08,
+                        showsReset: sharedReset == nil
+                    )
                 }
             }
         }
+    }
+
+    private func sharedResetRow(_ text: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: "clock.fill")
+                .font(.system(size: 8))
+
+            Text(text)
+                .font(.system(size: 10, weight: .medium, design: theme.fontDesign))
+
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(theme.textTertiary)
+        .padding(.horizontal, 4)
     }
 
     @ViewBuilder
@@ -599,12 +679,26 @@ struct MenuContentView: View {
             // account lacks quota data (note-only sections must still render).
             if snapshot.hasQuotaGroups {
                 quotaGroupSections(snapshot: snapshot)
-            } else if !snapshot.quotas.isEmpty {
+            }
+
+            if !snapshot.hasQuotaGroups, !snapshot.quotas.isEmpty {
+                let sharedReset = snapshot.quotas.sharedResetDescription()
+                if let sharedReset {
+                    sharedResetRow(sharedReset)
+                }
+            }
+
+            if !snapshot.hasQuotaGroups, !snapshot.quotas.isEmpty {
+                let sharedReset = snapshot.quotas.sharedResetDescription()
                 TwoColumnCardGrid(
                     items: Array(snapshot.quotas.enumerated()),
                     id: \.element.quotaType
                 ) { entry in
-                    WrappedStatCard(quota: entry.element, delay: Double(entry.offset) * 0.08)
+                    WrappedStatCard(
+                        quota: entry.element,
+                        delay: Double(entry.offset) * 0.08,
+                        showsReset: sharedReset == nil
+                    )
                 }
             }
 
@@ -714,6 +808,10 @@ struct MenuContentView: View {
                 gradient: theme.accentGradient,
                 isLoading: isCurrentlyRefreshing
             ) {
+                // An explicit refresh is the moment a user who just installed a
+                // CLI expects it to be picked up, so drop the cached lookups
+                // instead of waiting for their TTL to lapse.
+                BinaryLocator.invalidateCaches()
                 if settings.overviewModeEnabled {
                     Task { await refreshAllEnabled() }
                 } else {
@@ -754,8 +852,10 @@ struct MenuContentView: View {
 
             // Settings Button with update indicator
             Button {
-                // Avoid window resize animation glitches in MenuBarExtra.
-                showSettings = true
+                // Settings live in a standalone window. The app is an
+                // LSUIElement, so activate it to bring the window forward.
+                openWindow(id: "settings")
+                NSApp.activate(ignoringOtherApps: true)
             } label: {
                 ZStack {
                     Circle()
@@ -853,7 +953,8 @@ struct MenuContentView: View {
                 showSharePass = true
             }
         } catch {
-            // Provider stores error in lastError
+            // Provider stores the error in passError, which the popover surfaces
+            // as SharePassErrorOverlay — a failed click is never silent.
         }
     }
 }
@@ -906,6 +1007,22 @@ struct ProviderPill: View {
 
     private var providerIcon: String {
         ProviderVisualIdentityLookup.symbolIcon(for: providerId)
+    }
+}
+
+// MARK: - Provider Pill Overflow
+
+private struct PillsContentWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat { 0 }
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+private struct PillsViewportWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat { 0 }
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
@@ -983,6 +1100,7 @@ struct TwoColumnCardGrid<Item, ID: Hashable, Cell: View>: View {
 struct WrappedStatCard: View {
     let quota: UsageQuota
     let delay: Double
+    var showsReset: Bool = true
 
     @Environment(\.appTheme) private var theme
     @State private var isHovering = false
@@ -1073,12 +1191,12 @@ struct WrappedStatCard: View {
                 } else {
                     HStack(alignment: .firstTextBaseline, spacing: 1) {
                         Text("\(Int(quota.displayPercent(mode: effectiveDisplayMode)))")
-                            .font(.system(size: 32, weight: .bold, design: theme.fontDesign))
+                            .font(.system(size: 26, weight: .bold, design: theme.fontDesign))
                             .foregroundStyle(effectiveDisplayMode == .pace ? paceColor : theme.textPrimary)
                             .contentTransition(.numericText())
 
                         Text("%")
-                            .font(.system(size: 16, weight: .medium, design: theme.fontDesign))
+                            .font(.system(size: 13, weight: .medium, design: theme.fontDesign))
                             .foregroundStyle(effectiveDisplayMode == .pace ? paceColor.opacity(0.7) : theme.textTertiary)
                     }
                 }
@@ -1089,18 +1207,6 @@ struct WrappedStatCard: View {
                     .font(.system(size: isCappedSpend ? 10 : 12, weight: .medium, design: theme.fontDesign))
                     .fixedSize()
                     .foregroundStyle(effectiveDisplayMode == .pace ? paceColor.opacity(0.8) : theme.textTertiary)
-            }
-
-            // Pace insight line
-            if effectiveDisplayMode == .pace, let insight = quota.paceInsight {
-                HStack(spacing: 3) {
-                    Image(systemName: "lightbulb.fill")
-                        .font(.system(size: 7))
-                    Text(insight)
-                        .font(.system(size: 8, weight: .medium, design: theme.fontDesign))
-                }
-                .foregroundStyle(paceColor.opacity(0.8))
-                .lineLimit(1)
             }
 
             // Progress bar with gradient and pace tick
@@ -1140,8 +1246,8 @@ struct WrappedStatCard: View {
             }
             .help(quota.paceTickHelp(mode: effectiveDisplayMode) ?? "")
 
-            // Reset info
-            if let resetText = quota.resetTimestampDescription ?? quota.resetText ?? quota.resetDescription {
+            // Reset info (hidden when the grid hoisted a shared countdown)
+            if showsReset, let resetText = quota.resetTimestampDescription ?? quota.resetText ?? quota.resetDescription {
                 HStack(spacing: 3) {
                     Image(systemName: "clock.fill")
                         .font(.system(size: 7))
@@ -1172,6 +1278,11 @@ struct WrappedStatCard: View {
     }
 
     private var iconName: String {
+        let title = (quota.compactTitle ?? quota.quotaType.displayName).lowercased()
+        if title.contains("build") { return "hammer.fill" }
+        if title.contains("chat") { return "bubble.left.fill" }
+        if title.contains("imagine") { return "sparkles" }
+
         switch quota.quotaType {
         case .session: return "bolt.fill"
         case .weekly: return "calendar.badge.clock"

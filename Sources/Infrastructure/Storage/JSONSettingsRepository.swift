@@ -6,7 +6,8 @@ import Domain
 /// (including all sub-protocols) + HookSettingsRepository.
 ///
 /// Backed by `JSONSettingsStore` reading/writing `~/.claudebar/settings.json`.
-/// Credentials (tokens, API keys) use UserDefaults for now (Keychain migration later).
+/// Vercel credentials use the injected secure store; legacy provider credentials
+/// remain in UserDefaults pending their own migrations.
 public final class JSONSettingsRepository:
     AppSettingsRepository,
     ZaiSettingsRepository,
@@ -17,6 +18,7 @@ public final class JSONSettingsRepository:
     KimiSettingsRepository,
     MiniMaxSettingsRepository,
     AlibabaSettingsRepository,
+    VercelSettingsRepository,
     HookSettingsRepository,
     @unchecked Sendable
 {
@@ -25,10 +27,25 @@ public final class JSONSettingsRepository:
 
     private let store: JSONSettingsStore
     private let credentials: UserDefaults
+    private let secureCredentials: any CredentialRepository
 
-    public init(store: JSONSettingsStore, credentials: UserDefaults = .standard) {
+    private var vercelCredentials: SecureCredentialMigration {
+        SecureCredentialMigration(
+            secureStore: secureCredentials,
+            legacyStore: credentials,
+            secureKey: CredentialKey.vercelApiKey,
+            legacyKey: Self.legacyVercelApiKeyKey
+        )
+    }
+
+    public init(
+        store: JSONSettingsStore,
+        credentials: UserDefaults = .standard,
+        secureCredentials: any CredentialRepository = KeychainCredentialRepository.shared
+    ) {
         self.store = store
         self.credentials = credentials
+        self.secureCredentials = secureCredentials
     }
 
     // MARK: - AppSettingsRepository
@@ -517,5 +534,64 @@ public final class JSONSettingsRepository:
 
     public func hasMinimaxApiKey() -> Bool {
         getMinimaxApiKey() != nil
+    }
+
+    // MARK: - VercelSettingsRepository
+
+    public func vercelAuthEnvVar() -> String {
+        store.read(key: "vercel.authEnvVar") ?? ""
+    }
+
+    public func setVercelAuthEnvVar(_ envVar: String) {
+        store.write(value: envVar, key: "vercel.authEnvVar")
+    }
+
+    public func saveVercelApiKey(_ key: String) {
+        vercelCredentials.save(key)
+    }
+
+    public func getVercelApiKey() -> String? {
+        vercelCredentials.get()
+    }
+
+    @discardableResult
+    public func deleteVercelApiKey() -> Bool {
+        vercelCredentials.delete()
+    }
+
+    public func hasVercelApiKey() -> Bool {
+        vercelCredentials.exists()
+    }
+
+    private static let legacyVercelApiKeyKey = "com.claudebar.credentials.vercel-api-key"
+}
+
+// MARK: - DeepSeekSettingsRepository
+
+extension JSONSettingsRepository: DeepSeekSettingsRepository {
+    public func deepseekAuthEnvVar() -> String {
+        store.read(key: "deepseek.authEnvVar") ?? ""
+    }
+
+    public func setDeepSeekAuthEnvVar(_ envVar: String) {
+        store.write(value: envVar, key: "deepseek.authEnvVar")
+    }
+
+    // DeepSeek Credentials (UserDefaults for now)
+
+    public func saveDeepSeekApiKey(_ key: String) {
+        credentials.set(key, forKey: "com.claudebar.credentials.deepseek-api-key")
+    }
+
+    public func getDeepSeekApiKey() -> String? {
+        credentials.string(forKey: "com.claudebar.credentials.deepseek-api-key")
+    }
+
+    public func deleteDeepSeekApiKey() {
+        credentials.removeObject(forKey: "com.claudebar.credentials.deepseek-api-key")
+    }
+
+    public func hasDeepSeekApiKey() -> Bool {
+        getDeepSeekApiKey() != nil
     }
 }
