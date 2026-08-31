@@ -45,6 +45,11 @@ public final class ClaudeProvider: AIProvider {
     /// Whether the provider is currently fetching passes
     public private(set) var isFetchingPasses: Bool = false
 
+    /// The last error from a guest pass fetch (nil when the last fetch succeeded).
+    /// Kept separate from `lastError` so a failed invitation-link fetch never
+    /// makes the provider's usage data look unavailable.
+    public private(set) var passError: Error?
+
     // MARK: - Probe Mode
 
     /// The current probe mode (CLI or API)
@@ -307,17 +312,25 @@ public final class ClaudeProvider: AIProvider {
         do {
             let pass = try await passProbe.probe()
             guestPass = pass
-            lastError = nil
+            passError = nil
             return pass
         } catch {
-            lastError = error
+            passError = error
             throw error
         }
     }
 
-    /// Whether guest passes feature is available
+    /// Dismisses the last guest pass error.
+    public func clearPassError() {
+        passError = nil
+    }
+
+    /// Whether the guest passes feature is available.
+    /// Requires both a configured probe and a Max account — Anthropic issues
+    /// invitation links to Max subscribers only, and an unknown tier is not
+    /// evidence of one (issue #243).
     public var supportsGuestPasses: Bool {
-        passProbe != nil
+        passProbe != nil && snapshot?.accountTier?.supportsGuestPasses == true
     }
 
     /// Whether API mode is available (API probe was provided)

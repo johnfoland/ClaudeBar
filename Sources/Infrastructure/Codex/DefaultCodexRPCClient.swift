@@ -26,6 +26,17 @@ public final class DefaultCodexRPCClient: CodexRPCClient, @unchecked Sendable {
         self.transport = transport
     }
 
+    /// Arguments every Codex invocation gets, for both the app-server and the
+    /// TTY fallback.
+    ///
+    /// `--ask-for-approval` must stay a value the CLI still knows: Codex dropped
+    /// `untrusted` (leaving `on-request` and `never`), and an unknown value makes
+    /// the CLI exit at argument parsing — which took out the RPC path *and* the
+    /// TTY fallback at once (#259). `never` is accepted by old and new builds
+    /// alike, and cannot stall a non-interactive pipe on an approval prompt.
+    /// The read-only sandbox still keeps anything Codex might run boxed in.
+    static let baseArguments = ["-s", "read-only", "-a", "never"]
+
     public func isAvailable() -> Bool {
         let binaryName = executable
         if cliExecutor.locate(binaryName) != nil {
@@ -62,7 +73,7 @@ public final class DefaultCodexRPCClient: CodexRPCClient, @unchecked Sendable {
             let factory = transportFactory ?? { exec, args in
                 try ProcessRPCTransport(executable: exec, arguments: args)
             }
-            activeTransport = try factory(executable, ["-s", "read-only", "-a", "untrusted", "app-server"])
+            activeTransport = try factory(executable, Self.baseArguments + ["app-server"])
             ownsTransport = true
         }
         defer {
@@ -124,9 +135,9 @@ public final class DefaultCodexRPCClient: CodexRPCClient, @unchecked Sendable {
     private func fetchViaTTY() async throws -> CodexRateLimitsResponse {
         AppLog.probes.info("Starting Codex TTY fallback...")
 
-        let result = try cliExecutor.execute(
+        let result = try await cliExecutor.execute(
             binary: executable,
-            args: ["-s", "read-only", "-a", "untrusted"],
+            args: Self.baseArguments,
             input: "/status\n",
             timeout: 20.0,
             workingDirectory: nil,

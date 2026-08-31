@@ -145,7 +145,7 @@ public struct ZaiUsageProbe: UsageProbe {
         }
         AppLog.probes.debug("Using Z.ai config path: \(configPath.path)")
 
-        let result = try cliExecutor.execute(
+        let result = try await cliExecutor.execute(
             binary: "cat",
             args: [configPath.path],
             input: nil,
@@ -311,18 +311,22 @@ public struct ZaiUsageProbe: UsageProbe {
             switch (limit.type, limit.unit) {
             case ("TIME_LIMIT", _):
                 quotaType = .timeLimit("MCP")
-            case ("TOKENS_LIMIT", 3):
+            case ("TOKENS_LIMIT", 3), ("CREDIT_LIMIT", 3):
                 quotaType = .session
-            case ("TOKENS_LIMIT", 6):
+            case ("TOKENS_LIMIT", 6), ("CREDIT_LIMIT", 6):
                 quotaType = .weekly
-            case ("TOKENS_LIMIT", 7):
+            case ("TOKENS_LIMIT", 7), ("CREDIT_LIMIT", 7):
                 quotaType = .modelSpecific("Monthly")
-            case ("TOKENS_LIMIT", nil):
+            case ("TOKENS_LIMIT", nil), ("CREDIT_LIMIT", nil):
                 // Backward-compat: legacy responses with no `unit` field default to session.
                 quotaType = .session
             case ("TOKENS_LIMIT", let unit?):
                 // Unknown unit — preserve via modelSpecific so it isn't dropped/collapsed.
                 quotaType = .modelSpecific("Tokens (unit \(unit))")
+            case ("CREDIT_LIMIT", let unit?):
+                // Credit-based plan tiers (e.g. GLM Coding Lite) report CREDIT_LIMIT
+                // with the same `unit` semantics as TOKENS_LIMIT.
+                quotaType = .modelSpecific("Credits (unit \(unit))")
             default:
                 // Skip unknown limit types
                 continue

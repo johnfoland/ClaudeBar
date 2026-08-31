@@ -235,8 +235,10 @@ public final class QuotaMonitor {
     /// The primary window renders exactly as the single-window label always has
     /// (percentage and/or duration joined by " · "). When `secondaryQuotaKey` is
     /// non-empty and differs from the primary, a second window is appended: each
-    /// window is prefixed with its `QuotaType.shortLabel` and the two are joined
-    /// by " | ", e.g. "5h 12% | 7d 34%". The status is the most severe of the
+    /// window is prefixed with the quota's `menuBarTitle` when the probe set one
+    /// (a condensed form of labels too wide for the menu bar), otherwise its
+    /// `QuotaType.shortLabel`, and the two are joined by " | ", e.g.
+    /// "5h 12% | 7d 34%". The status is the most severe of the
     /// shown windows, and each window is also exposed individually via
     /// `MenuBarLabel.segments` for renderers that draw them on separate lines.
     ///
@@ -290,8 +292,17 @@ public final class QuotaMonitor {
 
         switch (primary, secondary) {
         case let (.some(primary), .some(secondary)):
-            let primaryLabel = QuotaType(quotaKey: primaryQuotaKey)?.shortLabel ?? primaryQuotaKey
-            let secondaryLabel = QuotaType(quotaKey: secondaryQuotaKey)?.shortLabel ?? secondaryQuotaKey
+            // Window prefix: the quota's own condensed menu-bar title wins
+            // (probes set it when the full label is too wide, e.g. a long
+            // account discriminator), then the type's short label.
+            func windowPrefix(forQuotaKey quotaKey: String) -> String {
+                if let title = quota(providerId: providerId, quotaKey: quotaKey)?.menuBarTitle {
+                    return title
+                }
+                return QuotaType(quotaKey: quotaKey)?.shortLabel ?? quotaKey
+            }
+            let primaryLabel = windowPrefix(forQuotaKey: primaryQuotaKey)
+            let secondaryLabel = windowPrefix(forQuotaKey: secondaryQuotaKey)
             // Each window becomes its own segment (prefixed text + that
             // window's status) so stacked rendering can draw and tint them
             // independently; the joined text stays the canonical single-line

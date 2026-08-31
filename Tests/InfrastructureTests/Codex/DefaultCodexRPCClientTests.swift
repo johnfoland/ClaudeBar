@@ -309,4 +309,65 @@ struct DefaultCodexRPCClientTests {
         // Then - transport must still be closed despite the error
         verify(mockTransport).close().called(.atLeastOnce)
     }
+
+    // MARK: - CLI Argument Compatibility (#259)
+
+    /// Codex removed `untrusted` from `--ask-for-approval` (only `on-request`
+    /// and `never` remain), so passing it makes the CLI exit at argument
+    /// parsing — killing the RPC path *and* the TTY fallback at once.
+    @Test
+    func `spawns app-server with an approval policy the Codex CLI still accepts`() async throws {
+        let mockTransport = MockRPCTransport()
+        let mockExecutor = MockCLIExecutor()
+        setupMockTransport(mockTransport, rateLimitsResponse: """
+        {"id":2,"result":{"rateLimits":{"planType":"pro","primary":{"usedPercent":30,"resetsAt":1735000000}}}}
+        """)
+
+        var spawnedArgs: [String] = []
+        let client = DefaultCodexRPCClient(executable: "codex", cliExecutor: mockExecutor)
+        client.transportFactory = { _, args in
+            spawnedArgs = args
+            return mockTransport
+        }
+
+        _ = try await client.fetchRateLimits()
+
+        let approval = approvalPolicy(in: spawnedArgs)
+        #expect(approval == "never")
+        #expect(!spawnedArgs.contains("untrusted"))
+        #expect(spawnedArgs.contains("app-server"))
+    }
+
+    @Test
+    func `TTY fallback uses an approval policy the Codex CLI still accepts`() async throws {
+        let mockTransport = MockRPCTransport()
+        let mockExecutor = MockCLIExecutor()
+        given(mockTransport).send(.any).willReturn(())
+        given(mockTransport).receive().willThrow(ProbeError.executionFailed("RPC failed"))
+        given(mockTransport).close().willReturn(())
+
+        var ttyArgs: [String] = []
+        given(mockExecutor).execute(binary: .any, args: .any, input: .any, timeout: .any, workingDirectory: .any, autoResponses: .any)
+            .willProduce { _, args, _, _, _, _ in
+                ttyArgs = args
+                return CLIResult(output: "5h limit\n[####------] 40% left", exitCode: 0)
+            }
+
+        let client = DefaultCodexRPCClient(executable: "codex", cliExecutor: mockExecutor)
+        client.transportFactory = { _, _ in mockTransport }
+
+        _ = try await client.fetchRateLimits()
+
+        #expect(approvalPolicy(in: ttyArgs) == "never")
+        #expect(!ttyArgs.contains("untrusted"))
+    }
+
+    /// Value passed to `-a` / `--ask-for-approval`, if any.
+    private func approvalPolicy(in args: [String]) -> String? {
+        guard let flagIndex = args.firstIndex(where: { $0 == "-a" || $0 == "--ask-for-approval" }),
+              args.indices.contains(flagIndex + 1) else {
+            return nil
+        }
+        return args[flagIndex + 1]
+    }
 }

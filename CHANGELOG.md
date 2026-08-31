@@ -7,6 +7,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.4.85] - 2026-08-25
+
+### Fixed
+- Refreshing the Claude OAuth token no longer strips fields ClaudeBar does not model (notably `scopes`) from `claudeAiOauth`. The credential is shared with Claude Code, so a write-back handed it back an incomplete record. (#256)
+- Claude credentials stored in the Keychain could not be read back on macOS 26, leaving the API probe reporting "No credentials found" until the next `claude` login. `security -w` returns any password holding a non-printable-ASCII byte as hex, and the pretty-printed JSON ClaudeBar wrote contained newlines. Payloads are now written compact, and hex-encoded items left behind by earlier builds are decoded on read. (#255)
+
+---
+
+## [0.4.84] - 2026-08-25
+
+### Fixed
+- Codex usage could not be retrieved at all ("Could not find usage limits in Codex output"). The Codex CLI dropped `untrusted` from `--ask-for-approval`, so both the app-server and the TTY fallback exited at argument parsing. (#259)
+- The header badge no longer shows a green "HEALTHY" for a provider that failed to probe; it now reads "UNAVAILABLE", or "NO DATA" before the first refresh. (#259)
+
+---
+
+## [0.4.83] - 2026-08-25
+
+### Fixed
+- OpenCode Go usage now comes from the official `/zen/go/v1/usage` endpoint, so the numbers match the opencode.ai dashboard instead of a local-DB estimate that only saw this machine's messages (#249). The API key is read from `OPENCODE_API_KEY` or opencode's `auth.json`; the local-DB probe remains as a fallback when no key is configured.
+
+---
+
+## [0.4.82] - 2026-08-24
+
+### Changed
+- Bug fixes and improvements.
+
+---
+
+## [0.4.81] - 2026-08-21
+
+### Changed
+- Bug fixes and improvements.
+
+---
+
+## [0.4.80] - 2026-08-19
+
+### Changed
+- Bug fixes and improvements.
+
+---
+
+## [0.4.79] - 2026-08-13
+
+### Changed
+- Bug fixes and improvements.
+
+---
+
+## [0.4.78] - 2026-08-13
+
+### Fixed
+- The menu bar reset countdown now shows hours with minutes in "H:MM" form
+  (e.g. "3:58") instead of truncating to whole hours ("3h"), which could
+  understate the remaining time by up to 59 minutes compared with the panel's
+  "3h 58m" detail. Day-level ("2d") and minute-level ("45m") labels are
+  unchanged. (#246)
+
+---
+
+## [0.4.77] - 2026-08-12
+
+### Fixed
+- The "Share Claude Code" button no longer appears on Claude Pro, API, or
+  not-yet-identified accounts. Anthropic issues invitation links to Max
+  subscribers only, so on other plans the button could do nothing but fail
+  silently. When a Max account's link fetch does fail, the popover now
+  explains why instead of ignoring the click, and the failure no longer marks
+  Claude's usage data as unavailable. (#243)
+
+---
+
+## [0.4.76] - 2026-08-09
+
+### Changed
+- Bug fixes and improvements.
+
+---
+
+## [0.4.75] - 2026-08-04
+
+### Added
+- Grok Build (xAI) provider: monitors weekly credit usage and per-product
+  limits (Grok Build, Grok Imagine, Grok Voice) via the same billing endpoint
+  the `grok` CLI uses. Reads OAuth credentials from `~/.grok/auth.json`,
+  refreshing expired tokens against the recorded OIDC issuer, and shows the
+  period reset countdown plus on-demand overflow usage once a cap is
+  configured. (#234)
+
 ### Fixed
 - Popover scrolling no longer trembles or snaps back while dragging upward.
   The card grids were `LazyVGrid`s inside the popover's vertical `ScrollView`,
@@ -14,6 +107,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cells materialized. Cards now lay out eagerly — the popover shows a few
   dozen at most, so laziness bought nothing — and the scroll view knows exact
   content heights up front.
+- Long account discriminators no longer flood the menu bar. Oh My Pi quota
+  labels embed an account token to keep multi-account quota keys unique
+  (e.g. "Claude 7d · jkjk987654321012"), and the dual-window menu bar label
+  rendered the whole thing. Aggregated quotas now carry a condensed menu-bar
+  title that truncates tokens longer than 8 characters to a 7-character
+  prefix plus an ellipsis ("Claude 7d · jkjk987…"); the menu bar and the
+  quota picker chips in Settings prefer it, while the full label — and
+  therefore every persisted quota key — stays unchanged. Condensed titles
+  that collide across accounts sharing a prefix get a numeric suffix
+  ("jkjk987… (2)") so the chips stay distinguishable.
 
 ---
 
@@ -903,7 +1006,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Menu bar interface with quota display
 - Automatic refresh every 5 minutes
 
-[Unreleased]: https://github.com/tddworks/ClaudeBar/compare/v0.4.73...HEAD
+[Unreleased]: https://github.com/tddworks/ClaudeBar/compare/v0.4.85...HEAD
+[0.4.85]: https://github.com/tddworks/ClaudeBar/compare/v0.4.84...v0.4.85
+[0.4.84]: https://github.com/tddworks/ClaudeBar/compare/v0.4.83...v0.4.84
+[0.4.83]: https://github.com/tddworks/ClaudeBar/compare/v0.4.82...v0.4.83
+[0.4.82]: https://github.com/tddworks/ClaudeBar/compare/v0.4.81...v0.4.82
+[0.4.81]: https://github.com/tddworks/ClaudeBar/compare/v0.4.80...v0.4.81
+[0.4.80]: https://github.com/tddworks/ClaudeBar/compare/v0.4.79...v0.4.80
+[0.4.79]: https://github.com/tddworks/ClaudeBar/compare/v0.4.78...v0.4.79
+[0.4.78]: https://github.com/tddworks/ClaudeBar/compare/v0.4.77...v0.4.78
+[0.4.77]: https://github.com/tddworks/ClaudeBar/compare/v0.4.76...v0.4.77
+[0.4.76]: https://github.com/tddworks/ClaudeBar/compare/v0.4.75...v0.4.76
+[0.4.75]: https://github.com/tddworks/ClaudeBar/compare/v0.4.73...v0.4.75
 [0.4.73]: https://github.com/tddworks/ClaudeBar/compare/v0.4.72...v0.4.73
 [0.4.72]: https://github.com/tddworks/ClaudeBar/compare/v0.4.71...v0.4.72
 [0.4.71]: https://github.com/tddworks/ClaudeBar/compare/v0.4.70...v0.4.71

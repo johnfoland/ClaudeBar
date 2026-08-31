@@ -150,6 +150,108 @@ struct ObservationRenderSyncTests {
         #expect(recorder.rendered == ["initial", "initial"])
     }
 
+    // MARK: - refreshNow (self-driven ticks)
+
+    @Test
+    func `refreshNow renders when the value changed`() {
+        // Given — the menu bar's countdown tick re-reads the wall clock
+        let source = Source()
+        let recorder = RenderRecorder()
+        let sync = ObservationRenderSync(
+            read: { source.value },
+            render: { recorder.record($0) }
+        )
+        sync.start()
+
+        // When
+        source.value = "ticked"
+        sync.refreshNow()
+
+        // Then
+        #expect(recorder.rendered == ["initial", "ticked"])
+    }
+
+    @Test
+    func `refreshNow does not render when the value is unchanged`() {
+        // Given — a colon-less menu bar label ("2d") must not repaint on every
+        // tick just because the clock advanced.
+        let source = Source()
+        let recorder = RenderRecorder()
+        let sync = ObservationRenderSync(
+            read: { source.value },
+            render: { recorder.record($0) }
+        )
+        sync.start()
+
+        // When — many ticks with nothing changing
+        sync.refreshNow()
+        sync.refreshNow()
+        sync.refreshNow()
+
+        // Then — unlike renderNow, no forced repaints
+        #expect(recorder.rendered == ["initial"])
+    }
+
+    @Test
+    func `refreshNow leaves observation armed so later state changes still render`() async {
+        // Given — refreshNow deliberately skips re-arming observation, so a
+        // ticking caller cannot accumulate one registration per tick. The
+        // registration from the last real sync must survive that.
+        let source = Source()
+        let recorder = RenderRecorder()
+        let sync = ObservationRenderSync(
+            read: { source.value },
+            render: { recorder.record($0) }
+        )
+        sync.start()
+
+        // When — ticks happen, then genuine observed state changes
+        sync.refreshNow()
+        sync.refreshNow()
+        source.value = "observed change"
+        await waitUntil { recorder.rendered.count >= 2 }
+
+        // Then — the change still reached the sink
+        #expect(recorder.rendered == ["initial", "observed change"])
+    }
+
+    @Test
+    func `refreshNow does nothing before start`() {
+        // Given
+        let source = Source()
+        let recorder = RenderRecorder()
+        let sync = ObservationRenderSync(
+            read: { source.value },
+            render: { recorder.record($0) }
+        )
+
+        // When
+        sync.refreshNow()
+
+        // Then
+        #expect(recorder.rendered.isEmpty)
+    }
+
+    @Test
+    func `refreshNow does nothing after stop`() {
+        // Given — the tick timer can outlive a stop by one fire
+        let source = Source()
+        let recorder = RenderRecorder()
+        let sync = ObservationRenderSync(
+            read: { source.value },
+            render: { recorder.record($0) }
+        )
+        sync.start()
+        sync.stop()
+
+        // When
+        source.value = "after stop"
+        sync.refreshNow()
+
+        // Then
+        #expect(recorder.rendered == ["initial"])
+    }
+
     @Test
     func `menu bar label content stays in sync with provider refreshes`() async {
         // Given — the real domain chain: provider snapshot → monitor → label
