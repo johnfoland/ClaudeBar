@@ -1,5 +1,26 @@
 name: Sync Fork with Upstream
 
+# ⏸️  NIGHTLY SCHEDULE DISABLED (2026-08-31).
+#
+# The mirror step below fast-forwards `main` and pushes it with the automatic
+# GITHUB_TOKEN. GitHub forbids GITHUB_TOKEN from creating or updating any file
+# under `.github/workflows/**` (the `workflows` permission can't be granted via
+# the `permissions:` block). Upstream now ships workflow files of its own
+# (contributors.yml, deploy-pages.yml, …), so every mirror push is rejected:
+#
+#   ! [remote rejected] HEAD -> main (refusing to allow a GitHub App to create
+#     or update workflow `.github/workflows/contributors.yml` without
+#     `workflows` permission)
+#
+# The `integrate` push to `mine` would hit the same wall. Fixing it needs a PAT
+# with `workflow` scope wired into both push steps. Until then, sync by hand
+# from a clone (your own credentials carry the `workflow` scope):
+#
+#   ./scripts/sync-upstream.sh
+#
+# To re-enable the nightly, uncomment the `schedule:` block below AND wire in a
+# workflow-scoped PAT — otherwise it just resumes failing every night.
+
 # Keeps this fork current with tddworks/ClaudeBar, end to end:
 #
 #   1. mirror    — fast-forwards `main` to upstream/main. Fast-forward only, so
@@ -19,8 +40,11 @@ name: Sync Fork with Upstream
 # push to `mine` below will not re-run fork-ci.yml — the tests already ran here.
 
 on:
-  schedule:
-    - cron: '0 6 * * *'   # daily, 06:00 UTC
+  # Nightly disabled — see the banner at the top of this file. The manual
+  # trigger is kept, but it will also fail until a workflow-scoped PAT is wired
+  # into the push steps; use ./scripts/sync-upstream.sh locally instead.
+  # schedule:
+  #   - cron: '0 6 * * *'   # daily, 06:00 UTC
   workflow_dispatch:
     inputs:
       force_integrate:
